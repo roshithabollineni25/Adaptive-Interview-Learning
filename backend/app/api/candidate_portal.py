@@ -27,6 +27,10 @@ def get_candidate_profile(db: Session = Depends(get_db), user: User = Depends(re
         db.commit()
         db.refresh(cand)
 
+    print(
+    f"Enrollment check: email={cand.email}, "
+    f"reference_exists={bool(cand.enrolled_face_reference)}, "
+    f"enrolled_at={cand.enrolled_at}")
     res = CandidateApplicationResponse.model_validate(cand)
     res.has_enrolled_face = bool(cand.enrolled_face_reference)
     return res
