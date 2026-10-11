@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4o-mini"
 
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "onboarding@resend.dev"
     # Interview engine bounds
     MAX_QUESTIONS_PER_SESSION: int = 5
     MAX_RECOVERY_ATTEMPTS: int = 2
