@@ -16,7 +16,11 @@ from app.models.entities import Base
 config = context.config
 
 # Set sqlalchemy.url from our settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+alembic_db_url = settings.DATABASE_URL
+if alembic_db_url.startswith("postgres://"):
+    alembic_db_url = alembic_db_url.replace("postgres://", "postgresql://", 1)
+
+config.set_main_option("sqlalchemy.url", alembic_db_url)
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:
@@ -39,7 +43,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
+    configuration["sqlalchemy.url"] = alembic_db_url
 
     connectable = engine_from_config(
         configuration,

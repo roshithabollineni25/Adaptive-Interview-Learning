@@ -79,6 +79,10 @@ class Candidate(Base):
     user = relationship("User", back_populates="candidate_profile")
     interviews = relationship("InterviewSession", back_populates="candidate")
 
+    @property
+    def has_enrolled_face(self) -> bool:
+        return bool(self.enrolled_face_reference and str(self.enrolled_face_reference).strip())
+
 class InterviewSession(Base):
     __tablename__ = "interview_sessions"
 

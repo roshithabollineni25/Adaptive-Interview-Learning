@@ -12,8 +12,20 @@ import type {
   CandidateInterviewView
 } from '../types';
 
+const getBaseUrl = (): string => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  // When hosted on Render or any external cloud host, point to the live Render backend API
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return 'https://adaptive-interview-learning.onrender.com/api';
+  }
+  // Local development default (Vite proxy)
+  return '/api';
+};
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: getBaseUrl(),
   headers: {
     'Content-Type': 'application/json'
   }
