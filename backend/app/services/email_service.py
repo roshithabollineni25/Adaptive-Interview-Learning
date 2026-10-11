@@ -78,6 +78,7 @@ Adaptive Interview Intelligence
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "User-Agent": "AdaptiveInterviewIntelligence/1.0",
             },
             method="POST",
         )
