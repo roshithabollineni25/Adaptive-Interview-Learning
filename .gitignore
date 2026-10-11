@@ -1,0 +1,25 @@
+
+# Secrets and environment variables
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Frontend dependencies and build output
+node_modules/
+frontend/dist/
+
+# Uploaded and generated files
+uploads/

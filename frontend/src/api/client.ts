@@ -1,0 +1,144 @@
+import axios from 'axios';
+import type {
+  HealthStatus,
+  AuthResponse,
+  User,
+  JobDescription,
+  CandidateSummary,
+  CandidateApplication,
+  CandidateInterviewScheduleItem,
+  InterviewSessionSummary,
+  InterviewSessionDetail,
+  CandidateInterviewView
+} from '../types';
+
+const api = axios.create({
+  baseURL: '/api',
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+// Intercept to add token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export const apiClient = {
+  // Health
+  getHealth: async (): Promise<HealthStatus> => {
+    const res = await api.get<HealthStatus>('/health');
+    return res.data;
+  },
+
+  // Auth
+  register: async (userData: { email: string; password: string; full_name: string; role?: string }): Promise<AuthResponse> => {
+    const res = await api.post<AuthResponse>('/auth/register', userData);
+    return res.data;
+  },
+
+  login: async (credentials: { email: string; password: string }): Promise<AuthResponse> => {
+    const res = await api.post<AuthResponse>('/auth/login', credentials);
+    return res.data;
+  },
+
+  getMe: async (): Promise<User> => {
+    const res = await api.get<User>('/auth/me');
+    return res.data;
+  },
+
+  // Candidate Portal Operations
+  getCandidateProfile: async (): Promise<CandidateApplication> => {
+    const res = await api.get<CandidateApplication>('/candidate-portal/profile');
+    return res.data;
+  },
+
+  submitCandidateApplication: async (formData: FormData): Promise<{ message: string; candidate: CandidateApplication }> => {
+    const res = await api.post<{ message: string; candidate: CandidateApplication }>('/candidate-portal/application', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return res.data;
+  },
+
+  enrollFace: async (faceImageBase64: string): Promise<{ status: string; message: string; metadata: any }> => {
+    const res = await api.post('/candidate-portal/enroll-face', { face_image_base64: faceImageBase64 });
+    return res.data;
+  },
+
+  getCandidateInterviews: async (): Promise<CandidateInterviewScheduleItem[]> => {
+    const res = await api.get<CandidateInterviewScheduleItem[]>('/candidate-portal/interviews');
+    return res.data;
+  },
+
+  // Recruiter Portal Operations
+  createJob: async (jobData: { title: string; department?: string; raw_text: string; experience_level?: string }): Promise<JobDescription> => {
+    const res = await api.post<JobDescription>('/recruitment/jobs', jobData);
+    return res.data;
+  },
+
+  getJobs: async (): Promise<JobDescription[]> => {
+    const res = await api.get<JobDescription[]>('/recruitment/jobs');
+    return res.data;
+  },
+
+  getCandidates: async (): Promise<CandidateSummary[]> => {
+    const res = await api.get<CandidateSummary[]>('/recruitment/candidates');
+    return res.data;
+  },
+
+  scheduleInterview: async (data: { candidate_id: number; job_description_id: number; scheduled_start: string }): Promise<any> => {
+    const res = await api.post('/recruitment/sessions/schedule', data);
+    return res.data;
+  },
+
+  getSessions: async (): Promise<InterviewSessionSummary[]> => {
+    const res = await api.get<InterviewSessionSummary[]>('/recruitment/sessions');
+    return res.data;
+  },
+
+  getSessionDetail: async (id: number): Promise<InterviewSessionDetail> => {
+    const res = await api.get<InterviewSessionDetail>(`/recruitment/sessions/${id}`);
+    return res.data;
+  },
+
+  updateDecision: async (sessionId: number, decision: { recruiter_decision: string; recruiter_notes?: string }): Promise<{ message: string; decision: string }> => {
+    const res = await api.patch(`/recruitment/sessions/${sessionId}/decision`, decision);
+    return res.data;
+  },
+
+  // Candidate Interview Engine Client
+  getCandidateInterview: async (token: string): Promise<CandidateInterviewView> => {
+    const res = await api.get<CandidateInterviewView>(`/interview/${token}`);
+    return res.data;
+  },
+
+  verifyIdentityProbe: async (token: string, probeFrameBase64: string): Promise<{ verified: boolean; message: string; similarity_score?: number; first_question?: any }> => {
+    const res = await api.post(`/interview/${token}/verify-identity`, { probe_frame_base64: probeFrameBase64 });
+    return res.data;
+  },
+
+  submitAnswer: async (token: string, answerText: string): Promise<any> => {
+    const res = await api.post(`/interview/${token}/submit-answer`, { answer_text: answerText });
+    return res.data;
+  },
+
+  logIntegrityEvent: async (token: string, eventType: string, severity?: string, confidence?: number, metadata?: any): Promise<any> => {
+    const res = await api.post(`/interview/${token}/integrity-event`, {
+      event_type: eventType,
+      severity: severity || 'low',
+      confidence: confidence || 1.0,
+      metadata_info: metadata
+    });
+    return res.data;
+  },
+
+  // Recruiter System Diagnostics
+  getSystemStatus: async (): Promise<{ database_connected: boolean; llm_provider: string; llm_configured: boolean; llm_status_message: string }> => {
+    const res = await api.get('/system/status');
+    return res.data;
+  }
+};
