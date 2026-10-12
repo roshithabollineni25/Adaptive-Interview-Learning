@@ -180,14 +180,22 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db), user: Use
         "skill_gap_analysis": s.skill_gap_analysis,
         "evidence_report": s.evidence_report,
         "candidate": {
-            "id": s.candidate.id,
-            "full_name": s.candidate.full_name,
-            "email": s.candidate.email,
-            "target_role": s.candidate.target_role,
-            "extracted_skills": s.candidate.extracted_skills,
-            "has_enrolled_face": bool(s.candidate.enrolled_face_reference)
+            "id": s.candidate.id if s.candidate else s.candidate_id,
+            "full_name": s.candidate.full_name if s.candidate else "Unknown Candidate",
+            "email": s.candidate.email if s.candidate else "",
+            "target_role": s.candidate.target_role if s.candidate else None,
+            "extracted_skills": s.candidate.extracted_skills if s.candidate and s.candidate.extracted_skills else [],
+            "has_enrolled_face": bool(s.candidate.enrolled_face_reference) if s.candidate else False
         },
-        "job": JobDescriptionResponse.model_validate(s.job_description),
+        "job": JobDescriptionResponse.model_validate(s.job_description) if s.job_description else {
+            "id": s.job_description_id,
+            "title": "Unassigned Position",
+            "department": None,
+            "raw_text": "",
+            "required_competencies": [],
+            "experience_level": "Mid-Senior",
+            "created_at": s.created_at
+        },
         "questions": questions_data,
         "integrity_events": integrity_data
     }

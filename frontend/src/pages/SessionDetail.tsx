@@ -17,17 +17,29 @@ export const SessionDetail: React.FC = () => {
   const [savingDecision, setSavingDecision] = useState(false);
   const [decisionNotice, setDecisionNotice] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null);
 
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   const loadDetail = async () => {
     if (!id) return;
     try {
       setLoading(true);
+      setErrorMsg(null);
       const data = await apiClient.getSessionDetail(Number(id));
       setSession(data);
       if (data.recruiter_decision) setDecision(data.recruiter_decision);
       if (data.recruiter_notes) setNotes(data.recruiter_notes);
       if (data.candidate_feedback) setCandidateFeedback(data.candidate_feedback);
     } catch (err: any) {
-      alert(err?.response?.data?.detail || 'Failed to fetch session detail');
+      if (err?.response?.status === 401 || err?.response?.status === 403) {
+        window.location.href = '/login';
+        return;
+      }
+      const detail = err?.response?.data?.detail;
+      if (err?.response?.status === 404) {
+        setErrorMsg(`Interview session #${id} was not found in the database.`);
+      } else {
+        setErrorMsg(detail || 'Evaluation report is not available for this session yet.');
+      }
     } finally {
       setLoading(false);
     }
@@ -80,10 +92,41 @@ export const SessionDetail: React.FC = () => {
     }
   };
 
-  if (loading || !session) {
+  if (loading) {
     return (
       <div style={{ maxWidth: 1000, margin: '60px auto', textAlign: 'center', color: 'var(--text-muted)' }}>
         Loading Candidate Dossier & Evidence Reports...
+      </div>
+    );
+  }
+
+  if (errorMsg || !session) {
+    return (
+      <div style={{ maxWidth: 800, margin: '60px auto', padding: '0 20px' }}>
+        <div style={{ marginBottom: 20 }}>
+          <Link to="/recruiter" className="btn btn-secondary" style={{ padding: '6px 14px', fontSize: 13 }}>
+            <ArrowLeft size={16} /> Back to Recruiter Dashboard
+          </Link>
+        </div>
+        <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <div style={{ display: 'inline-flex', padding: 12, borderRadius: '50%', backgroundColor: 'var(--bg-subtle)', marginBottom: 16 }}>
+            <BarChart3 size={32} color="var(--sage-accent)" />
+          </div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8, color: 'var(--text-primary)' }}>
+            Report Not Available Yet
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14, maxWidth: 500, margin: '0 auto 24px', lineHeight: 1.6 }}>
+            {errorMsg || 'This interview session has not generated an evaluation report yet. Once the candidate completes the session questions, the full skill-gap and evidence dossier will appear here.'}
+          </p>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <button onClick={loadDetail} className="btn btn-primary" style={{ padding: '8px 18px', fontSize: 13 }}>
+              Retry Fetching Report
+            </button>
+            <Link to="/recruiter" className="btn btn-secondary" style={{ padding: '8px 18px', fontSize: 13 }}>
+              Return to Queue
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }
