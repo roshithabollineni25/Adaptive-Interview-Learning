@@ -173,6 +173,10 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db), user: Use
         "final_recommendation": s.final_recommendation,
         "recruiter_decision": s.recruiter_decision,
         "recruiter_notes": s.recruiter_notes,
+        "candidate_feedback": s.candidate_feedback,
+        "decision_at": s.decision_at,
+        "decision_notification_status": s.decision_notification_status,
+        "decision_notification_error": s.decision_notification_error,
         "skill_gap_analysis": s.skill_gap_analysis,
         "evidence_report": s.evidence_report,
         "candidate": {
@@ -197,13 +201,57 @@ def update_recruiter_decision(
 ):
     session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    session.recruiter_decision = decision_data.recruiter_decision
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    old_decision = session.recruiter_decision
+    new_decision = decision_data.recruiter_decision.strip()
+
+    session.recruiter_decision = new_decision
+    session.decision_at = datetime.utcnow()
     if decision_data.recruiter_notes is not None:
         session.recruiter_notes = decision_data.recruiter_notes
+    if decision_data.candidate_feedback is not None:
+        session.candidate_feedback = decision_data.candidate_feedback
+
+    # Send decision email if decision changed or notification not yet accepted
+    email_delivery_report = None
+    candidate = session.candidate
+    job = session.job_description
+
+    # Only send email when candidate exists and either decision changed or notification hasn't been accepted yet
+    should_send_email = candidate and (
+        old_decision != new_decision or session.decision_notification_status != "accepted"
+    )
+
+    if should_send_email:
+        email_res = email_service.send_hiring_decision_notification(
+            candidate_email=candidate.email,
+            candidate_name=candidate.full_name,
+            job_title=job.title if job else "Target Position",
+            decision=new_decision,
+            candidate_feedback=session.candidate_feedback
+        )
+        session.decision_notification_status = email_res.get("status", "pending")
+        session.decision_notification_error = email_res.get("message")
+        email_delivery_report = email_res
+    else:
+        email_delivery_report = {
+            "status": session.decision_notification_status or "unchanged",
+            "delivered": session.decision_notification_status == "accepted",
+            "message": "Decision unchanged; email notification previously processed."
+        }
+
+    # Persist the decision in database
     db.commit()
-    return {"message": "Hiring decision recorded", "decision": session.recruiter_decision}
+    db.refresh(session)
+
+    return {
+        "message": f"Hiring decision '{new_decision}' successfully recorded in database.",
+        "decision": session.recruiter_decision,
+        "decision_at": session.decision_at,
+        "candidate_feedback": session.candidate_feedback,
+        "email_delivery": email_delivery_report
+    }
 
 @router.patch("/sessions/{session_id}/reschedule")
 def reschedule_interview_session(

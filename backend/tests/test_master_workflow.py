@@ -5,9 +5,64 @@ from app.main import app
 from app.core.database import SessionLocal
 from app.models.entities import User, Candidate, JobDescription, InterviewSession, InterviewQuestion
 
+from unittest.mock import patch
+from app.services.llm_service import llm_service
+
 client = TestClient(app)
 
+def mock_invoke_structured(system_instruction: str, prompt: str):
+    """Deterministic mock for LLM calls during automated workflow tests to avoid burning real quota."""
+    lower = f"{system_instruction} {prompt}".lower()
+    if "competencies" in lower:
+        return {
+            "competencies": [
+                {"name": "Python Systems", "weight": 0.4, "description": "High performance backend systems in Python"},
+                {"name": "Distributed Storage", "weight": 0.3, "description": "PostgreSQL HA and distributed caching"},
+                {"name": "API Design", "weight": 0.3, "description": "FastAPI and resilient REST architectures"}
+            ],
+            "_metadata": {"is_real_llm": True, "evaluator": "test_mock", "source": "mock"}
+        }
+    elif "resume" in lower or "extract profile" in lower or "technical skills" in lower:
+        return {
+            "extracted_skills": ["Python", "FastAPI", "Docker", "Distributed Consensus", "PostgreSQL"],
+            "experience_summary": ["PhD in Computer Systems", "Senior Distributed Systems Engineer"],
+            "education": ["PhD in Computer Systems"],
+            "_metadata": {"is_real_llm": True, "evaluator": "test_mock", "source": "mock"}
+        }
+    elif "evaluate candidate answer" in lower or "assessment engine" in lower:
+        return {
+            "score": 8.5,
+            "technical_accuracy": 8.5,
+            "depth_of_knowledge": 8.0,
+            "clarity_of_communication": 9.0,
+            "strengths": ["Clear explanation of Raft consensus and PostgreSQL replication"],
+            "weaknesses": ["Could expand on network partition recovery"],
+            "evidence_quote": "Raft consensus and PostgreSQL read replicas with automated failover",
+            "confidence_level": "High",
+            "next_difficulty": "Hard",
+            "adaptation_reason": "Candidate exhibited advanced distributed systems knowledge.",
+            "_metadata": {"is_real_llm": True, "evaluator": "test_mock", "source": "mock"}
+        }
+    elif "question #" in lower or "generate question" in lower:
+        return {
+            "question": "How do you handle split-brain scenarios in a distributed cluster with PostgreSQL?",
+            "competency_tested": "Distributed Storage",
+            "difficulty_level": "Medium",
+            "expected_criteria": "Understanding of consensus, fencing tokens, and automated failover.",
+            "_metadata": {"is_real_llm": True, "evaluator": "test_mock", "source": "mock"}
+        }
+    return {
+        "competencies": [{"name": "Core Engineering", "weight": 1.0, "description": "Engineering"}],
+        "extracted_skills": ["Python"],
+        "score": 8.0,
+        "_metadata": {"is_real_llm": True, "evaluator": "test_mock", "source": "mock"}
+    }
+
 def test_full_recruiter_and_candidate_workflow():
+    with patch.object(llm_service, "invoke_structured", side_effect=mock_invoke_structured):
+        _run_full_recruiter_and_candidate_workflow()
+
+def _run_full_recruiter_and_candidate_workflow():
     # 1. Register Recruiter
     recruiter_email = f"recruiter.test.{datetime.datetime.utcnow().timestamp()}@adaptive.io"
     reg_recruiter = client.post("/api/auth/register", json={
@@ -70,9 +125,9 @@ def test_full_recruiter_and_candidate_workflow():
     session_token = sched_data["session_token"]
     session_id = sched_data["session_id"]
     
-    # Check email delivery report: reports configuration_required when RESEND_API_KEY is not set
+    # Check email delivery report: reports configuration_required when BREVO_API_KEY is not set
     assert sched_data["email_delivery"]["delivered"] is False
-    assert "RESEND" in sched_data["email_delivery"]["message"] or "provider" in sched_data["email_delivery"]["message"].lower()
+    assert "brevo" in sched_data["email_delivery"]["message"].lower() or "provider" in sched_data["email_delivery"]["message"].lower()
 
     # 6. Candidate accesses Gateway
     gw_res = client.get(f"/api/interview/{session_token}")
@@ -148,13 +203,26 @@ def test_full_recruiter_and_candidate_workflow():
     assert dossier["skill_gap_analysis"] is not None
     assert len(dossier["questions"]) > 0
 
-    # 12. Recruiter records human hiring decision
+    # 12. Recruiter records human hiring decision with candidate feedback and confidential internal notes
     dec_res = client.patch(f"/api/recruitment/sessions/{session_id}/decision", json={
-        "recruiter_decision": "Hired",
-        "recruiter_notes": "Candidate proved solid knowledge of distributed consensus and failover mechanisms."
+        "recruiter_decision": "Selected",
+        "recruiter_notes": "CONFIDENTIAL: Strong algorithms mastery, recommended level L5 senior.",
+        "candidate_feedback": "Exceptional understanding of consensus algorithms and resilience patterns."
     }, headers=recruiter_headers)
     assert dec_res.status_code == 200
-    assert dec_res.json()["decision"] == "Hired"
+    assert dec_res.json()["decision"] == "Selected"
+
+    # 12b. Candidate views their dashboard interviews: must see "Selected" and approved feedback, but NOT confidential recruiter notes
+    cand_decision_view = client.get("/api/candidate-portal/interviews", headers=cand_headers)
+    assert cand_decision_view.status_code == 200
+    cand_sessions = cand_decision_view.json()
+    assert len(cand_sessions) >= 1
+    session_item = next(s for s in cand_sessions if s["id"] == session_id)
+    assert session_item["decision_status"] == "Selected"
+    assert session_item["candidate_feedback"] == "Exceptional understanding of consensus algorithms and resilience patterns."
+    # Strict confidentiality check: internal notes must NOT be present in candidate payload
+    assert "recruiter_notes" not in session_item
+    assert "CONFIDENTIAL" not in str(cand_decision_view.content)
 
     # 13. Test Scheduling a new session for Reschedule & Delete verification
     sched2_res = client.post("/api/recruitment/sessions/schedule", json={

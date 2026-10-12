@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from app.schemas.api_schemas import (
 from app.services.document_parser import extract_document_text
 from app.services.llm_service import llm_service
 from app.services.identity_service import extract_face_region, decode_base64_image
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +28,6 @@ def get_candidate_profile(db: Session = Depends(get_db), user: User = Depends(re
         db.commit()
         db.refresh(cand)
 
-    print(
-    f"Enrollment check: email={cand.email}, "
-    f"reference_exists={bool(cand.enrolled_face_reference)}, "
-    f"enrolled_at={cand.enrolled_at}")
     res = CandidateApplicationResponse.model_validate(cand)
     res.has_enrolled_face = bool(cand.enrolled_face_reference)
     return res
@@ -129,23 +126,39 @@ def enroll_candidate_face(
         raise HTTPException(status_code=500, detail=f"Internal biometric processing error: {str(e)}")
 
 @router.get("/interviews")
-def list_candidate_interviews(db: Session = Depends(get_db), user: User = Depends(require_candidate)):
-    cand = db.query(Candidate).filter(Candidate.email == user.email).first()
+def list_candidate_interviews(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_candidate),
+):
+    cand = db.query(Candidate).filter(
+        Candidate.email == user.email
+    ).first()
+
     if not cand:
         return []
 
-    sessions = db.query(InterviewSession).filter(InterviewSession.candidate_id == cand.id).order_by(InterviewSession.created_at.desc()).all()
+    sessions = (
+        db.query(InterviewSession)
+        .filter(InterviewSession.candidate_id == cand.id)
+        .order_by(InterviewSession.created_at.desc())
+        .all()
+    )
+
     results = []
     now = datetime.utcnow()
 
     for s in sessions:
-        # Check window status
         window_status = "upcoming"
+
         if s.scheduled_start:
-            from app.core.config import settings
-            from datetime import timedelta
-            early_start = s.scheduled_start - timedelta(minutes=settings.INTERVIEW_EARLY_ACCESS_MINUTES)
-            window_end = s.scheduled_end or (s.scheduled_start + timedelta(minutes=settings.INTERVIEW_WINDOW_MINUTES))
+            early_start = s.scheduled_start - timedelta(
+                minutes=settings.INTERVIEW_EARLY_ACCESS_MINUTES
+            )
+            window_end = s.scheduled_end or (
+                s.scheduled_start
+                + timedelta(minutes=settings.INTERVIEW_WINDOW_MINUTES)
+            )
+
             if now < early_start:
                 window_status = "too_early"
             elif now > window_end:
@@ -153,16 +166,38 @@ def list_candidate_interviews(db: Session = Depends(get_db), user: User = Depend
             else:
                 window_status = "open"
 
+        # Candidate-facing decision status
+        recruiter_dec = (
+            s.recruiter_decision.strip()
+            if s.recruiter_decision
+            else ""
+        )
+
+        if recruiter_dec in ["Hired", "Selected"]:
+            decision_status = "Selected"
+        elif recruiter_dec == "Rejected":
+            decision_status = "Rejected"
+        elif recruiter_dec == "On Hold":
+            decision_status = "On Hold"
+        else:
+            decision_status = "Decision Pending"
+
         results.append({
             "id": s.id,
             "session_token": s.session_token,
-            "job_title": s.job_description.title,
+            "job_title": (
+                s.job_description.title if s.job_description else "Unknown role"
+            ),
             "status": s.status,
             "scheduled_start": s.scheduled_start,
             "scheduled_end": s.scheduled_end,
             "window_status": window_status,
             "identity_verified": s.identity_verified,
             "interview_url": f"/interview/{s.session_token}",
-            "created_at": s.created_at
+            "decision_status": decision_status,
+            "decision_at": s.decision_at,
+            "candidate_feedback": s.candidate_feedback,
+            "created_at": s.created_at,
         })
+
     return results

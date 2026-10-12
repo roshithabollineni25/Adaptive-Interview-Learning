@@ -169,14 +169,20 @@ class LLMService:
             return validated_data
 
         except Exception as e:
+            err_str = str(e)
+            is_quota_exhausted = "429" in err_str or "resource_exhausted" in err_str.lower() or "quota exceeded" in err_str.lower()
             logger.error(f"LLM call to {settings.LLM_PROVIDER} failed ({type(e).__name__}): {e}")
             res = self._fallback_response(system_instruction, prompt)
             res["_metadata"] = {
                 "is_real_llm": False,
-                "evaluator": "API Error Baseline Fallback",
-                "source": "api_error_fallback",
+                "evaluator": "Quota Limit Baseline Fallback" if is_quota_exhausted else "API Error Baseline Fallback",
+                "source": "quota_exhausted" if is_quota_exhausted else "api_error_fallback",
                 "error_details": str(e),
-                "notice": f"LLM provider error occurred ({type(e).__name__}). Algorithmic baseline applied."
+                "notice": (
+                    "LLM provider quota temporarily exhausted (429). Transparent algorithmic baseline applied."
+                    if is_quota_exhausted
+                    else f"LLM provider error occurred ({type(e).__name__}). Algorithmic baseline applied."
+                )
             }
             return res
 

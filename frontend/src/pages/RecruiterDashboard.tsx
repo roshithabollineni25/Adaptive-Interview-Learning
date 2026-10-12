@@ -114,7 +114,7 @@ export const RecruiterDashboard: React.FC = () => {
 
       const emailNotice = res.email_delivery?.delivered
         ? `Invitation sent to candidate's registered email address.`
-        : `Invitation recorded in database. Note: ${res.email_delivery?.message || 'SMTP config required'}`;
+        : `Invitation recorded in database. Note: ${res.email_delivery?.message || 'Email provider configuration required'}`;
 
       alert(`Interview successfully scheduled! ${emailNotice}\nCandidate direct link: ${window.location.origin}${res.interview_link}`);
     } catch (err: any) {
@@ -165,7 +165,7 @@ export const RecruiterDashboard: React.FC = () => {
 
       const emailNotice = res.email_delivery?.delivered
         ? "Updated invitation sent to candidate's registered email."
-        : `Schedule persisted in database. Note: ${res.email_delivery?.message || 'SMTP config required'}`;
+        : `Schedule persisted in database. Note: ${res.email_delivery?.message || 'Email provider configuration required'}`;
 
       alert(`Interview successfully rescheduled! ${emailNotice}`);
     } catch (err: any) {
