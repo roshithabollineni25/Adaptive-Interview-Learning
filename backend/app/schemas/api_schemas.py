@@ -73,6 +73,9 @@ class ScheduleInterviewRequest(BaseModel):
     job_description_id: int
     scheduled_start: datetime
 
+class RescheduleInterviewRequest(BaseModel):
+    new_scheduled_start: datetime
+
 # Identity Verification Probe
 class IdentityVerificationProbe(BaseModel):
     probe_frame_base64: str

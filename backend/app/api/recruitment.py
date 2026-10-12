@@ -1,22 +1,25 @@
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.api.auth import require_recruiter
 from app.models.entities import (
     User, JobDescription, Candidate, InterviewSession,
-    InterviewQuestion, IntegrityEvent
+    InterviewQuestion, IntegrityEvent, InterviewStatus
 )
 from app.schemas.api_schemas import (
     JobDescriptionCreate, JobDescriptionResponse,
     CandidateApplicationResponse, ScheduleInterviewRequest,
+    RescheduleInterviewRequest,
     QuestionAnswerSubmit, IntegrityEventCreate,
     RecruiterDecisionUpdate, IdentityVerificationProbe
 )
 from app.services.document_parser import extract_document_text
 from app.services.llm_service import llm_service
+from app.services.email_service import email_service
 from app.services.interview_engine import interview_engine
 from app.services.identity_service import compare_faces
 
@@ -201,6 +204,83 @@ def update_recruiter_decision(
         session.recruiter_notes = decision_data.recruiter_notes
     db.commit()
     return {"message": "Hiring decision recorded", "decision": session.recruiter_decision}
+
+@router.patch("/sessions/{session_id}/reschedule")
+def reschedule_interview_session(
+    session_id: int,
+    reschedule_data: RescheduleInterviewRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_recruiter)
+):
+    session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    if session.status == InterviewStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Cannot reschedule a completed interview session.")
+
+    new_start = reschedule_data.new_scheduled_start
+    if new_start.tzinfo is not None:
+        new_start = new_start.replace(tzinfo=None)
+
+    now = datetime.utcnow()
+    # Permit scheduling with small grace margin (e.g. 2 minutes in past) but reject clearly past dates
+    if new_start < now - timedelta(minutes=2):
+        raise HTTPException(status_code=400, detail="New scheduled start time cannot be in the past.")
+
+    session.scheduled_start = new_start
+    session.scheduled_end = new_start + timedelta(minutes=settings.INTERVIEW_WINDOW_MINUTES)
+    session.status = InterviewStatus.SCHEDULED
+    # Reset identity verification gate for the new rescheduled session window
+    session.identity_verified = False
+    session.identity_verified_at = None
+
+    # Send rescheduled notification to candidate
+    candidate = session.candidate
+    job = session.job_description
+    email_res = email_service.send_interview_rescheduled(
+        candidate_email=candidate.email,
+        candidate_name=candidate.full_name,
+        job_title=job.title,
+        new_scheduled_start=new_start,
+        session_token=session.session_token
+    )
+
+    session.invitation_email_status = email_res.get("status", "pending")
+    db.commit()
+    db.refresh(session)
+
+    return {
+        "message": "Interview session successfully rescheduled.",
+        "session_id": session.id,
+        "scheduled_start": session.scheduled_start,
+        "scheduled_end": session.scheduled_end,
+        "status": session.status,
+        "email_delivery": email_res
+    }
+
+@router.delete("/sessions/{session_id}")
+def delete_interview_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_recruiter)
+):
+    session = db.query(InterviewSession).filter(InterviewSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    # If the session was completed with evaluated report data, prevent accidental loss of audit history
+    # or handle cleanly. For scheduled/in-progress or non-final sessions, remove session and cascade-orphans.
+    cand_name = session.candidate.full_name if session.candidate else "Candidate"
+    job_title = session.job_description.title if session.job_description else "Position"
+
+    db.delete(session)
+    db.commit()
+
+    return {
+        "message": f"Interview session for {cand_name} ({job_title}) was successfully deleted.",
+        "session_id": session_id
+    }
 
 # ----------------- CANDIDATE INTERVIEW EXPERIENCE -----------------
 interview_router = APIRouter(prefix="/interview", tags=["Candidate Interview"])

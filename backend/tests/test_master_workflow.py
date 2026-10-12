@@ -70,9 +70,9 @@ def test_full_recruiter_and_candidate_workflow():
     session_token = sched_data["session_token"]
     session_id = sched_data["session_id"]
     
-    # Check email delivery report: SMTP is disabled in dev by default, so it honestly reports configuration_required
+    # Check email delivery report: reports configuration_required when RESEND_API_KEY is not set
     assert sched_data["email_delivery"]["delivered"] is False
-    assert "SMTP" in sched_data["email_delivery"]["message"]
+    assert "RESEND" in sched_data["email_delivery"]["message"] or "provider" in sched_data["email_delivery"]["message"].lower()
 
     # 6. Candidate accesses Gateway
     gw_res = client.get(f"/api/interview/{session_token}")
@@ -155,3 +155,36 @@ def test_full_recruiter_and_candidate_workflow():
     }, headers=recruiter_headers)
     assert dec_res.status_code == 200
     assert dec_res.json()["decision"] == "Hired"
+
+    # 13. Test Scheduling a new session for Reschedule & Delete verification
+    sched2_res = client.post("/api/recruitment/sessions/schedule", json={
+        "candidate_id": cand_id,
+        "job_description_id": job_id,
+        "scheduled_start": (datetime.datetime.utcnow() + datetime.timedelta(hours=2)).isoformat()
+    }, headers=recruiter_headers)
+    assert sched2_res.status_code == 200
+    sess2_id = sched2_res.json()["session_id"]
+
+    # 14. Recruiter reschedules session to tomorrow
+    resched_time = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat()
+    resched_res = client.patch(f"/api/recruitment/sessions/{sess2_id}/reschedule", json={
+        "new_scheduled_start": resched_time
+    }, headers=recruiter_headers)
+    assert resched_res.status_code == 200
+    assert resched_res.json()["status"] == "scheduled"
+
+    # 15. Candidate views updated interview list reflecting rescheduled time
+    cand_invites = client.get("/api/candidate-portal/interviews", headers=cand_headers)
+    assert cand_invites.status_code == 200
+    matching_sess = [s for s in cand_invites.json() if s["id"] == sess2_id]
+    assert len(matching_sess) == 1
+    assert "interview_url" in matching_sess[0]
+
+    # 16. Recruiter deletes session
+    del_res = client.delete(f"/api/recruitment/sessions/{sess2_id}", headers=recruiter_headers)
+    assert del_res.status_code == 200
+    assert del_res.json()["session_id"] == sess2_id
+
+    # 17. Deleted session is gone from queue
+    get_deleted = client.get(f"/api/recruitment/sessions/{sess2_id}", headers=recruiter_headers)
+    assert get_deleted.status_code == 404

@@ -122,6 +122,16 @@ export const apiClient = {
     return res.data;
   },
 
+  rescheduleInterview: async (sessionId: number, newScheduledStart: string): Promise<any> => {
+    const res = await api.patch(`/recruitment/sessions/${sessionId}/reschedule`, { new_scheduled_start: newScheduledStart });
+    return res.data;
+  },
+
+  deleteInterview: async (sessionId: number): Promise<{ message: string; session_id: number }> => {
+    const res = await api.delete(`/recruitment/sessions/${sessionId}`);
+    return res.data;
+  },
+
   // Candidate Interview Engine Client
   getCandidateInterview: async (token: string): Promise<CandidateInterviewView> => {
     const res = await api.get<CandidateInterviewView>(`/interview/${token}`);

@@ -7,7 +7,17 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     PORT: int = 8000
     HOST: str = "127.0.0.1"
-    FRONTEND_URL: str = "http://127.0.0.1:5173"
+    FRONTEND_URL: Optional[str] = None
+
+    @property
+    def frontend_origin(self) -> str:
+        if self.FRONTEND_URL and self.FRONTEND_URL.strip():
+            return self.FRONTEND_URL.rstrip('/')
+        # When running on Render or in production environment, use the deployed static site URL
+        import os
+        if os.getenv("RENDER") or self.ENVIRONMENT == "production":
+            return "https://adaptive-interview-frontend-b2ol.onrender.com"
+        return "http://127.0.0.1:5173"
 
     # Database configuration: defaults to SQLite for local portable dev if PostgreSQL not reachable
     # When PostgreSQL is active, set DATABASE_URL="postgresql://user:pass@localhost:5432/dbname"
@@ -29,7 +39,7 @@ class Settings(BaseSettings):
     # LLM Settings
     LLM_PROVIDER: str = "gemini"
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash"
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4o-mini"
 

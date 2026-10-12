@@ -65,7 +65,7 @@ To enable live Google Gemini evaluations, populate your Gemini API key in `.env`
 ```env
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=AIzaSy...
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.5-flash
 ```
 
 *(Note: If no LLM key is configured, the system uses its built-in fallback engine, allowing full workflow testing without failure).*

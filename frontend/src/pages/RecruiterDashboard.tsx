@@ -4,7 +4,8 @@ import { apiClient } from '../api/client';
 import type { JobDescription, CandidateSummary, InterviewSessionSummary } from '../types';
 import {
   Briefcase, Users, Plus,
-  AlertCircle, LogOut, ExternalLink, Calendar
+  AlertCircle, LogOut, ExternalLink, Calendar,
+  RefreshCw, Trash2, Clock
 } from 'lucide-react';
 
 export const RecruiterDashboard: React.FC = () => {
@@ -13,6 +14,8 @@ export const RecruiterDashboard: React.FC = () => {
   const [sessions, setSessions] = useState<InterviewSessionSummary[]>([]);
   const [systemDiag, setSystemDiag] = useState<{ llm_configured: boolean; llm_status_message: string } | null>(null);
   const [showCandidates, setShowCandidates] = useState(false);
+  const [refreshingQueue, setRefreshingQueue] = useState(false);
+  const [queueMessage, setQueueMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Job creation form
   const [showJobModal, setShowJobModal] = useState(false);
@@ -25,6 +28,17 @@ export const RecruiterDashboard: React.FC = () => {
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | ''>('');
   const [selectedJobId, setSelectedJobId] = useState<number | ''>('');
   const [scheduleTime, setScheduleTime] = useState<string>('');
+
+  // Reschedule Modal Form
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [sessionToReschedule, setSessionToReschedule] = useState<InterviewSessionSummary | null>(null);
+  const [rescheduleTime, setRescheduleTime] = useState<string>('');
+  const [rescheduling, setRescheduling] = useState(false);
+
+  // Delete Confirmation Modal Form
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState<InterviewSessionSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const navigate = useNavigate();
 
@@ -105,6 +119,81 @@ export const RecruiterDashboard: React.FC = () => {
       alert(`Interview successfully scheduled! ${emailNotice}\nCandidate direct link: ${window.location.origin}${res.interview_link}`);
     } catch (err: any) {
       alert(err?.response?.data?.detail || 'Failed to schedule interview');
+    }
+  };
+
+  const handleRefreshQueue = async () => {
+    if (refreshingQueue) return;
+    try {
+      setRefreshingQueue(true);
+      setQueueMessage(null);
+      await loadData();
+      setQueueMessage({ type: 'success', text: `Queue refreshed with live data (${sessions.length} sessions).` });
+      setTimeout(() => setQueueMessage(null), 4000);
+    } catch (err: any) {
+      setQueueMessage({ type: 'error', text: 'Failed to refresh queue from backend.' });
+    } finally {
+      setRefreshingQueue(false);
+    }
+  };
+
+  const openRescheduleModal = (session: InterviewSessionSummary) => {
+    setSessionToReschedule(session);
+    // Preset current scheduled time if available
+    if (session.scheduled_start) {
+      const d = new Date(session.scheduled_start);
+      // Format as local YYYY-MM-DDTHH:mm for datetime-local input
+      const localIso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      setRescheduleTime(localIso);
+    } else {
+      setRescheduleTime('');
+    }
+    setShowRescheduleModal(true);
+  };
+
+  const handleReschedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sessionToReschedule || !rescheduleTime) return;
+
+    try {
+      setRescheduling(true);
+      const res = await apiClient.rescheduleInterview(sessionToReschedule.id, new Date(rescheduleTime).toISOString());
+      setShowRescheduleModal(false);
+      setSessionToReschedule(null);
+      setRescheduleTime('');
+      await loadData();
+
+      const emailNotice = res.email_delivery?.delivered
+        ? "Updated invitation sent to candidate's registered email."
+        : `Schedule persisted in database. Note: ${res.email_delivery?.message || 'SMTP config required'}`;
+
+      alert(`Interview successfully rescheduled! ${emailNotice}`);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Failed to reschedule interview session.');
+    } finally {
+      setRescheduling(false);
+    }
+  };
+
+  const openDeleteModal = (session: InterviewSessionSummary) => {
+    setSessionToDelete(session);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteSession = async () => {
+    if (!sessionToDelete) return;
+
+    try {
+      setDeleting(true);
+      const res = await apiClient.deleteInterview(sessionToDelete.id);
+      setShowDeleteModal(false);
+      setSessionToDelete(null);
+      await loadData();
+      alert(res.message || 'Interview session deleted successfully.');
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Failed to delete interview session.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -260,14 +349,28 @@ export const RecruiterDashboard: React.FC = () => {
       {/* Real Sessions Table */}
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Interview Schedules & Human Decision Queue</h2>
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Interview Schedules & Human Decision Queue</h2>
+            {queueMessage && (
+              <div style={{
+                marginTop: 6,
+                fontSize: 12,
+                color: queueMessage.type === 'success' ? 'var(--success)' : 'var(--danger)',
+                fontWeight: 500
+              }}>
+                {queueMessage.text}
+              </div>
+            )}
+          </div>
           <button
-            onClick={loadData}
+            onClick={handleRefreshQueue}
+            disabled={refreshingQueue}
             className="btn btn-secondary"
-            style={{ fontSize: 12, padding: '5px 12px' }}
-            title="Refresh candidates and scheduled interview sessions"
+            style={{ fontSize: 12, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 6 }}
+            title="Fetch live candidate queue and interview records from backend"
           >
-            Refresh Queue
+            <RefreshCw size={14} className={refreshingQueue ? 'animate-spin' : ''} style={{ animation: refreshingQueue ? 'spin 1s linear infinite' : 'none' }} />
+            {refreshingQueue ? 'Refreshing...' : 'Refresh Queue'}
           </button>
         </div>
         {sessions.length === 0 ? (
@@ -342,13 +445,33 @@ export const RecruiterDashboard: React.FC = () => {
                         <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Under Review</span>
                       )}
                     </td>
-                    <td style={{ padding: '14px 10px', display: 'flex', gap: 8 }}>
-                      <Link to={`/recruiter/sessions/${s.id}`} className="btn btn-secondary" style={{ padding: '5px 12px', fontSize: 12 }}>
-                        Review Report
-                      </Link>
-                      <Link to={`/interview/${s.session_token}`} target="_blank" className="btn btn-primary" style={{ padding: '5px 12px', fontSize: 12 }}>
-                        Access Link <ExternalLink size={12} />
-                      </Link>
+                    <td style={{ padding: '14px 10px' }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <Link to={`/recruiter/sessions/${s.id}`} className="btn btn-secondary" style={{ padding: '5px 10px', fontSize: 12 }}>
+                          Review Report
+                        </Link>
+                        <Link to={`/interview/${s.session_token}`} target="_blank" className="btn btn-primary" style={{ padding: '5px 10px', fontSize: 12 }}>
+                          Access Link <ExternalLink size={11} />
+                        </Link>
+                        {s.status !== 'completed' && (
+                          <button
+                            onClick={() => openRescheduleModal(s)}
+                            className="btn btn-secondary"
+                            style={{ padding: '5px 10px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            title="Reschedule interview session"
+                          >
+                            <Clock size={12} /> Reschedule
+                          </button>
+                        )}
+                        <button
+                          onClick={() => openDeleteModal(s)}
+                          className="btn btn-secondary"
+                          style={{ padding: '5px 10px', fontSize: 12, color: 'var(--danger)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          title="Delete interview session"
+                        >
+                          <Trash2 size={12} /> Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -438,6 +561,100 @@ export const RecruiterDashboard: React.FC = () => {
                 <button type="submit" className="btn btn-primary">Confirm Schedule & Dispatch Invite</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Reschedule Interview Session */}
+      {showRescheduleModal && sessionToReschedule && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(31, 29, 36, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, backdropFilter: 'blur(4px)' }}>
+          <div className="card" style={{ width: 480, maxWidth: '90%' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Clock size={18} color="var(--sage-accent)" /> Reschedule Interview Session
+            </h3>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+              Candidate: <strong>{sessionToReschedule.candidate_name}</strong> ({sessionToReschedule.candidate_email})<br />
+              Role: <strong>{sessionToReschedule.job_title}</strong>
+            </p>
+
+            <form onSubmit={handleReschedule} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>
+                  New Scheduled Date & Time
+                </label>
+                <input
+                  type="datetime-local"
+                  required
+                  style={{ width: '100%' }}
+                  value={rescheduleTime}
+                  onChange={(e) => setRescheduleTime(e.target.value)}
+                />
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>
+                  The candidate's secure link will unlock 15 minutes before this updated time and expire after 90 minutes.
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
+                <button
+                  type="button"
+                  disabled={rescheduling}
+                  onClick={() => { setShowRescheduleModal(false); setSessionToReschedule(null); }}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={rescheduling}
+                  className="btn btn-primary"
+                >
+                  {rescheduling ? 'Updating Schedule...' : 'Save New Schedule'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirm Delete Interview Session */}
+      {showDeleteModal && sessionToDelete && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(31, 29, 36, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, backdropFilter: 'blur(4px)' }}>
+          <div className="card" style={{ width: 460, maxWidth: '90%', border: '1px solid var(--border-light)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <div style={{ padding: 8, borderRadius: '50%', backgroundColor: '#fee2e2', color: 'var(--danger)' }}>
+                <Trash2 size={20} />
+              </div>
+              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--danger)' }}>
+                Confirm Session Deletion
+              </h3>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 18 }}>
+              Are you sure you want to delete the scheduled interview for <strong>{sessionToDelete.candidate_name}</strong> for the <strong>{sessionToDelete.job_title}</strong> position?
+              <br /><br />
+              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                This removes the interview schedule from the decision queue. The candidate account and uploaded resume will remain safe and unaffected.
+              </span>
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => { setShowDeleteModal(false); setSessionToDelete(null); }}
+                className="btn btn-secondary"
+              >
+                Keep Session
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={handleDeleteSession}
+                className="btn btn-primary"
+                style={{ backgroundColor: 'var(--danger)', borderColor: 'var(--danger)' }}
+              >
+                {deleting ? 'Deleting...' : 'Delete Interview'}
+              </button>
+            </div>
           </div>
         </div>
       )}

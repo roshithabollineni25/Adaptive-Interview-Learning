@@ -64,23 +64,17 @@ class LLMService:
         client = genai.Client(api_key=api_key)
         target_model = settings.GEMINI_MODEL
 
-        try:
-            response = client.models.generate_content(
-                model=target_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.2,
-                    response_mime_type="application/json"
-                )
-            )
-            return response.text
-        except errors.APIError as e:
-            # Handle model not found fallback (e.g. try gemini-2.0-flash or gemini-1.5-flash)
-            if "not found" in str(e).lower() or "404" in str(e):
-                logger.warning(f"Model {target_model} not found, falling back to gemini-2.0-flash: {e}")
-                fallback_response = client.models.generate_content(
-                    model="gemini-2.0-flash",
+        # Primary model and resilient fallback candidates for the active API key
+        candidate_models = [target_model]
+        for fallback in ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"]:
+            if fallback not in candidate_models:
+                candidate_models.append(fallback)
+
+        last_error = None
+        for model_name in candidate_models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
@@ -88,14 +82,27 @@ class LLMService:
                         response_mime_type="application/json"
                     )
                 )
-                return fallback_response.text
-            elif "429" in str(e) or "resource_exhausted" in str(e).lower():
-                logger.error(f"Gemini API Rate Limit or Quota Exceeded: {e}")
-                raise RuntimeError(f"Gemini API rate limit or quota exceeded: {e}")
-            elif "401" in str(e) or "403" in str(e) or "api_key_invalid" in str(e).lower():
-                logger.error(f"Gemini API Authentication Failed: Invalid API key: {e}")
-                raise RuntimeError(f"Invalid GEMINI_API_KEY: {e}")
-            raise
+                if model_name != target_model:
+                    logger.info(f"Successfully generated content using fallback model: {model_name}")
+                return response.text
+            except errors.APIError as e:
+                last_error = e
+                # Check for model not found (404) or transient unavailable / high demand (503)
+                if "not found" in str(e).lower() or "404" in str(e) or "503" in str(e) or "unavailable" in str(e).lower():
+                    logger.warning(f"Gemini model {model_name} unavailable ({e.code if hasattr(e, 'code') else type(e).__name__}). Trying next fallback candidate...")
+                    continue
+                elif "429" in str(e) or "resource_exhausted" in str(e).lower():
+                    logger.error(f"Gemini API Rate Limit or Quota Exceeded: {e}")
+                    raise RuntimeError(f"Gemini API rate limit or quota exceeded: {e}")
+                elif "401" in str(e) or "403" in str(e) or "api_key_invalid" in str(e).lower():
+                    logger.error(f"Gemini API Authentication Failed: Invalid API key: {e}")
+                    raise RuntimeError(f"Invalid GEMINI_API_KEY: {e}")
+                raise
+
+        # If all candidates exhausted, raise last recorded error
+        if last_error:
+            raise last_error
+        raise RuntimeError("No Gemini models succeeded.")
 
     def _call_openai(self, system_instruction: str, prompt: str, api_key: str) -> str:
         from openai import OpenAI
@@ -192,7 +199,15 @@ class LLMService:
                 return data
         elif "competencies" in lower:
             try:
-                val = CompetencyListSchema(**data)
+                if isinstance(data, list):
+                    val = CompetencyListSchema(competencies=data)
+                elif isinstance(data, dict):
+                    if "competencies" in data:
+                        val = CompetencyListSchema(**data)
+                    else:
+                        val = CompetencyListSchema(competencies=[data])
+                else:
+                    return data
                 return val.model_dump()
             except ValidationError:
                 return data

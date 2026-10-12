@@ -20,7 +20,7 @@ class EmailService:
         session_token: str,
     ) -> Dict[str, Any]:
         interview_url = (
-            f"{settings.FRONTEND_URL}/interview/{session_token}"
+            f"{settings.frontend_origin}/interview/{session_token.strip()}"
         )
         formatted_time = scheduled_start.strftime(
             "%A, %B %d, %Y at %I:%M %p UTC"
@@ -51,7 +51,51 @@ We wish you the best for your interview.
 Recruitment Committee
 Adaptive Interview Intelligence
 """
+        return self._send_email(candidate_email, subject, body, interview_url)
 
+    def send_interview_rescheduled(
+        self,
+        candidate_email: str,
+        candidate_name: str,
+        job_title: str,
+        new_scheduled_start: datetime,
+        session_token: str,
+    ) -> Dict[str, Any]:
+        interview_url = (
+            f"{settings.frontend_origin}/interview/{session_token.strip()}"
+        )
+        formatted_time = new_scheduled_start.strftime(
+            "%A, %B %d, %Y at %I:%M %p UTC"
+        )
+
+        subject = (
+            f"Interview Rescheduled: {job_title} "
+            "at Adaptive Interview Intelligence"
+        )
+
+        body = f"""Dear {candidate_name},
+
+Your interview for {job_title} has been rescheduled to a new time window.
+
+UPDATED SCHEDULED TIME:
+{formatted_time}
+
+SECURE INTERVIEW ACCESS LINK:
+{interview_url}
+
+IMPORTANT INSTRUCTIONS:
+1. Your secure link opens {settings.INTERVIEW_EARLY_ACCESS_MINUTES} minutes before the new scheduled time and expires after {settings.INTERVIEW_WINDOW_MINUTES} minutes.
+2. Identity verification is required before the interview begins.
+3. Please prepare a working camera, microphone, and stable internet connection.
+
+If you have any questions, please reach out to your recruiter.
+
+Recruitment Committee
+Adaptive Interview Intelligence
+"""
+        return self._send_email(candidate_email, subject, body, interview_url)
+
+    def _send_email(self, candidate_email: str, subject: str, body: str, interview_url: str) -> Dict[str, Any]:
         api_key = settings.RESEND_API_KEY
         from_email = settings.RESEND_FROM_EMAIL
 
@@ -60,7 +104,7 @@ Adaptive Interview Intelligence
             return {
                 "status": "configuration_required",
                 "delivered": False,
-                "message": "Email provider is not configured.",
+                "message": "Email provider is not configured (RESEND_API_KEY missing).",
                 "candidate_email": candidate_email,
                 "interview_url": interview_url,
             }
