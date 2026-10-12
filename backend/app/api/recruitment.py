@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -277,7 +277,11 @@ def reschedule_interview_session(
 
     new_start = reschedule_data.new_scheduled_start
     if new_start.tzinfo is not None:
-        new_start = new_start.replace(tzinfo=None)
+        new_start = new_start.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        # If naive datetime provided, treat as Asia/Kolkata (IST UTC+05:30) and convert to UTC
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        new_start = new_start.replace(tzinfo=ist_tz).astimezone(timezone.utc).replace(tzinfo=None)
 
     now = datetime.utcnow()
     # Permit scheduling with small grace margin (e.g. 2 minutes in past) but reject clearly past dates

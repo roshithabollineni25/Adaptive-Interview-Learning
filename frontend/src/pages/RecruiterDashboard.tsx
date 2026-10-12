@@ -37,6 +37,45 @@ const formatIstTime = (val?: string | null): string => {
   }).format(d);
 };
 
+const formatIstDatetimeLocal = (val?: string | null): string => {
+  const d = parseIsoDate(val);
+  if (!d) return '';
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(d);
+  const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  const hour = map.hour === '24' ? '00' : map.hour;
+  return `${map.year}-${map.month}-${map.day}T${hour}:${map.minute}`;
+};
+
+const istInputToIso = (localStr: string): string => {
+  if (!localStr) return '';
+  const trimmed = localStr.trim();
+  if (trimmed.length === 16) {
+    return `${trimmed}:00+05:30`;
+  }
+  if (trimmed.length === 19) {
+    return `${trimmed}+05:30`;
+  }
+  return trimmed;
+};
+
+const isIstDatetimeInPast = (localStr: string): boolean => {
+  if (!localStr) return false;
+  const isoWithOffset = istInputToIso(localStr);
+  const targetDate = new Date(isoWithOffset);
+  if (isNaN(targetDate.getTime())) return false;
+  // Permit up to 2 minutes grace period for form submission delays
+  const now = new Date();
+  return targetDate.getTime() < now.getTime() - 2 * 60 * 1000;
+};
+
 export const RecruiterDashboard: React.FC = () => {
   const [jobs, setJobs] = useState<JobDescription[]>([]);
   const [candidates, setCandidates] = useState<CandidateSummary[]>([]);
@@ -62,6 +101,7 @@ export const RecruiterDashboard: React.FC = () => {
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [sessionToReschedule, setSessionToReschedule] = useState<InterviewSessionSummary | null>(null);
   const [rescheduleTime, setRescheduleTime] = useState<string>('');
+  const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const [rescheduling, setRescheduling] = useState(false);
 
   // Delete Confirmation Modal Form
@@ -129,11 +169,16 @@ export const RecruiterDashboard: React.FC = () => {
     e.preventDefault();
     if (!selectedCandidateId || !selectedJobId || !scheduleTime) return;
 
+    if (isIstDatetimeInPast(scheduleTime)) {
+      alert("Scheduled start time cannot be in the past.");
+      return;
+    }
+
     try {
       const res = await apiClient.scheduleInterview({
         candidate_id: Number(selectedCandidateId),
         job_description_id: Number(selectedJobId),
-        scheduled_start: new Date(scheduleTime).toISOString()
+        scheduled_start: istInputToIso(scheduleTime)
       });
       setShowScheduleModal(false);
       setSelectedCandidateId('');
@@ -168,12 +213,10 @@ export const RecruiterDashboard: React.FC = () => {
 
   const openRescheduleModal = (session: InterviewSessionSummary) => {
     setSessionToReschedule(session);
-    // Preset current scheduled time if available
+    setRescheduleError(null);
+    // Preset current scheduled time in IST if available
     if (session.scheduled_start) {
-      const d = new Date(session.scheduled_start);
-      // Format as local YYYY-MM-DDTHH:mm for datetime-local input
-      const localIso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-      setRescheduleTime(localIso);
+      setRescheduleTime(formatIstDatetimeLocal(session.scheduled_start));
     } else {
       setRescheduleTime('');
     }
@@ -184,12 +227,22 @@ export const RecruiterDashboard: React.FC = () => {
     e.preventDefault();
     if (!sessionToReschedule || !rescheduleTime) return;
 
+    setRescheduleError(null);
+
+    // Validate that new scheduled start time is not in the past
+    if (isIstDatetimeInPast(rescheduleTime)) {
+      setRescheduleError("New scheduled start time cannot be in the past.");
+      return;
+    }
+
     try {
       setRescheduling(true);
-      const res = await apiClient.rescheduleInterview(sessionToReschedule.id, new Date(rescheduleTime).toISOString());
+      const isoWithIstOffset = istInputToIso(rescheduleTime);
+      const res = await apiClient.rescheduleInterview(sessionToReschedule.id, isoWithIstOffset);
       setShowRescheduleModal(false);
       setSessionToReschedule(null);
       setRescheduleTime('');
+      setRescheduleError(null);
       await loadData();
 
       const emailNotice = res.email_delivery?.delivered
@@ -198,7 +251,8 @@ export const RecruiterDashboard: React.FC = () => {
 
       alert(`Interview successfully rescheduled! ${emailNotice}`);
     } catch (err: any) {
-      alert(err?.response?.data?.detail || 'Failed to reschedule interview session.');
+      const errorDetail = err?.response?.data?.detail || 'Failed to reschedule interview session.';
+      setRescheduleError(errorDetail);
     } finally {
       setRescheduling(false);
     }
@@ -607,19 +661,39 @@ export const RecruiterDashboard: React.FC = () => {
             </p>
 
             <form onSubmit={handleReschedule} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {rescheduleError && (
+                <div style={{
+                  padding: '10px 14px',
+                  backgroundColor: '#fee2e2',
+                  border: '1px solid #f87171',
+                  borderRadius: 6,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 13,
+                  color: 'var(--danger)'
+                }}>
+                  <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                  <span>{rescheduleError}</span>
+                </div>
+              )}
+
               <div>
                 <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>
-                  New Scheduled Date & Time
+                  New Scheduled Date & Time (IST)
                 </label>
                 <input
                   type="datetime-local"
                   required
                   style={{ width: '100%' }}
                   value={rescheduleTime}
-                  onChange={(e) => setRescheduleTime(e.target.value)}
+                  onChange={(e) => {
+                    setRescheduleTime(e.target.value);
+                    if (rescheduleError) setRescheduleError(null);
+                  }}
                 />
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>
-                  The candidate's secure link will unlock 15 minutes before this updated time and expire after 90 minutes.
+                  Times are scheduled in Indian Standard Time (Asia/Kolkata). The candidate's link unlocks 15 mins prior and expires after 90 mins.
                 </span>
               </div>
 
