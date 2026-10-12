@@ -159,24 +159,50 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db), user: Use
             "timestamp": ev.timestamp
         })
 
+    status_val = s.status.value if hasattr(s.status, "value") else str(s.status)
+
+    if s.job_description:
+        try:
+            job_data = JobDescriptionResponse.model_validate(s.job_description).model_dump()
+        except Exception:
+            job_data = {
+                "id": s.job_description.id,
+                "title": s.job_description.title or "Unassigned Position",
+                "department": s.job_description.department,
+                "raw_text": s.job_description.raw_text or "",
+                "required_competencies": s.job_description.required_competencies or [],
+                "experience_level": s.job_description.experience_level or "Mid-Senior",
+                "created_at": s.job_description.created_at or s.created_at
+            }
+    else:
+        job_data = {
+            "id": s.job_description_id or 0,
+            "title": "Unassigned Position",
+            "department": None,
+            "raw_text": "",
+            "required_competencies": [],
+            "experience_level": "Mid-Senior",
+            "created_at": s.created_at
+        }
+
     return {
         "id": s.id,
         "session_token": s.session_token,
-        "status": s.status,
+        "status": status_val,
         "scheduled_start": s.scheduled_start,
         "scheduled_end": s.scheduled_end,
         "invitation_email_status": s.invitation_email_status,
-        "identity_verified": s.identity_verified,
+        "identity_verified": bool(s.identity_verified),
         "identity_verification_details": s.identity_verification_details,
         "current_difficulty": s.current_difficulty,
         "final_score": s.final_score,
         "final_recommendation": s.final_recommendation,
         "recruiter_decision": s.recruiter_decision,
         "recruiter_notes": s.recruiter_notes,
-        "candidate_feedback": s.candidate_feedback,
-        "decision_at": s.decision_at,
-        "decision_notification_status": s.decision_notification_status,
-        "decision_notification_error": s.decision_notification_error,
+        "candidate_feedback": getattr(s, "candidate_feedback", None),
+        "decision_at": getattr(s, "decision_at", None),
+        "decision_notification_status": getattr(s, "decision_notification_status", None),
+        "decision_notification_error": getattr(s, "decision_notification_error", None),
         "skill_gap_analysis": s.skill_gap_analysis,
         "evidence_report": s.evidence_report,
         "candidate": {
@@ -187,15 +213,7 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db), user: Use
             "extracted_skills": s.candidate.extracted_skills if s.candidate and s.candidate.extracted_skills else [],
             "has_enrolled_face": bool(s.candidate.enrolled_face_reference) if s.candidate else False
         },
-        "job": JobDescriptionResponse.model_validate(s.job_description) if s.job_description else {
-            "id": s.job_description_id,
-            "title": "Unassigned Position",
-            "department": None,
-            "raw_text": "",
-            "required_competencies": [],
-            "experience_level": "Mid-Senior",
-            "created_at": s.created_at
-        },
+        "job": job_data,
         "questions": questions_data,
         "integrity_events": integrity_data
     }

@@ -37,6 +37,8 @@ export const SessionDetail: React.FC = () => {
       const detail = err?.response?.data?.detail;
       if (err?.response?.status === 404) {
         setErrorMsg(`Interview session #${id} was not found in the database.`);
+      } else if (err?.response?.status >= 500) {
+        setErrorMsg(detail ? `Server error: ${detail}` : 'Failed to retrieve session report due to a server error. Please retry.');
       } else {
         setErrorMsg(detail || 'Evaluation report is not available for this session yet.');
       }
