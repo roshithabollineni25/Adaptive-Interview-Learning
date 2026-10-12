@@ -195,9 +195,9 @@ def list_candidate_interviews(
             "identity_verified": s.identity_verified,
             "interview_url": f"/interview/{s.session_token}",
             "decision_status": decision_status,
-            "decision_at": s.decision_at,
-            "candidate_feedback": s.candidate_feedback,
-            "created_at": s.created_at,
+            "decision_at": getattr(s, "decision_at", None),
+            "candidate_feedback": getattr(s, "candidate_feedback", None),
+            "created_at": s.created_at
         })
 
     return results

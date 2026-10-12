@@ -28,16 +28,19 @@ allowed_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "https://adaptive-interview-frontend-b2ol.onrender.com",
-    "https://adaptive-interview-learning.onrender.com"
+    "https://adaptive-interview-learning.onrender.com",
 ]
+if settings.frontend_origin and settings.frontend_origin not in allowed_origins:
+    allowed_origins.append(settings.frontend_origin)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.onrender\.com",
+    allow_origin_regex=r"^https://.*\.onrender\.com$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Register routers under /api
