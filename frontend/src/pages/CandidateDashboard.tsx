@@ -4,7 +4,7 @@ import { apiClient } from '../api/client';
 import type { CandidateApplication, CandidateInterviewScheduleItem } from '../types';
 import { 
   FileText, Upload, Calendar, Camera, CheckCircle2, 
-  AlertCircle, LogOut, ArrowRight 
+  AlertCircle, LogOut, ArrowRight, CheckCircle, Clock, XCircle 
 } from 'lucide-react';
 
 export const CandidateDashboard: React.FC = () => {
@@ -32,12 +32,26 @@ export const CandidateDashboard: React.FC = () => {
     try {
       setLoading(true);
       const [profData, intData] = await Promise.all([
-        apiClient.getCandidateProfile(),
-        apiClient.getCandidateInterviews()
+        apiClient.getCandidateProfile().catch((err) => {
+          if (err?.response?.status === 401 || err?.response?.status === 403) {
+            throw err;
+          }
+          console.error("Failed to load candidate profile", err);
+          return null;
+        }),
+        apiClient.getCandidateInterviews().catch((err) => {
+          if (err?.response?.status === 401 || err?.response?.status === 403) {
+            throw err;
+          }
+          console.error("Failed to load candidate interviews", err);
+          return [];
+        })
       ]);
-      setProfile(profData);
-      setInterviews(intData);
-      if (profData.target_role) setTargetRole(profData.target_role);
+      if (profData) {
+        setProfile(profData);
+        if (profData.target_role) setTargetRole(profData.target_role);
+      }
+      setInterviews(intData || []);
     } catch (err: any) {
       if (err?.response?.status === 401 || err?.response?.status === 403) {
         navigate('/candidate/login');
@@ -320,13 +334,22 @@ export const CandidateDashboard: React.FC = () => {
                   <th style={{ padding: '12px 10px' }}>Scheduled Start</th>
                   <th style={{ padding: '12px 10px' }}>Window Status</th>
                   <th style={{ padding: '12px 10px' }}>Identity Status</th>
+                  <th style={{ padding: '12px 10px' }}>Hiring Decision</th>
                   <th style={{ padding: '12px 10px' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {interviews.map((item) => (
                   <tr key={item.id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                    <td style={{ padding: '14px 10px', fontWeight: 600 }}>{item.job_title}</td>
+                    <td style={{ padding: '14px 10px', fontWeight: 600 }}>
+                      {item.job_title}
+                      {item.candidate_feedback && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)', background: 'var(--bg-subtle)', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-light)', fontWeight: 400 }}>
+                          <span style={{ fontWeight: 600, color: 'var(--sage-accent)' }}>Feedback: </span>
+                          {item.candidate_feedback}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: '14px 10px' }}>
                       {item.scheduled_start 
                         ? new Date(item.scheduled_start).toLocaleString() 
@@ -347,13 +370,43 @@ export const CandidateDashboard: React.FC = () => {
                       )}
                     </td>
                     <td style={{ padding: '14px 10px' }}>
-                      <Link 
-                        to={item.interview_url} 
-                        className={`btn ${item.window_status === 'open' ? 'btn-primary' : 'btn-secondary'}`}
-                        style={{ padding: '6px 14px', fontSize: 12 }}
-                      >
-                        Enter Gateway <ArrowRight size={12} />
-                      </Link>
+                      {item.decision_status === 'Selected' ? (
+                        <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700, padding: '5px 10px' }}>
+                          <CheckCircle size={13} /> Selected
+                        </span>
+                      ) : item.decision_status === 'Rejected' ? (
+                        <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, padding: '5px 10px' }}>
+                          <XCircle size={13} /> Rejected
+                        </span>
+                      ) : item.decision_status === 'On Hold' ? (
+                        <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px' }}>
+                          <Clock size={13} /> On Hold
+                        </span>
+                      ) : (
+                        <span className="badge badge-info" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px' }}>
+                          <Clock size={13} /> Decision Pending
+                        </span>
+                      )}
+                      {item.decision_at && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                          {new Date(item.decision_at).toLocaleDateString()}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ padding: '14px 10px' }}>
+                      {item.status === 'completed' ? (
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
+                          Interview Completed
+                        </span>
+                      ) : (
+                        <Link 
+                          to={item.interview_url} 
+                          className={`btn ${item.window_status === 'open' ? 'btn-primary' : 'btn-secondary'}`}
+                          style={{ padding: '6px 14px', fontSize: 12 }}
+                        >
+                          Enter Gateway <ArrowRight size={12} />
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 ))}

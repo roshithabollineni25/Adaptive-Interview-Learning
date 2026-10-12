@@ -13,7 +13,9 @@ export const SessionDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [decision, setDecision] = useState<string>('Hired');
   const [notes, setNotes] = useState<string>('');
+  const [candidateFeedback, setCandidateFeedback] = useState<string>('');
   const [savingDecision, setSavingDecision] = useState(false);
+  const [decisionNotice, setDecisionNotice] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null);
 
   const loadDetail = async () => {
     if (!id) return;
@@ -23,6 +25,7 @@ export const SessionDetail: React.FC = () => {
       setSession(data);
       if (data.recruiter_decision) setDecision(data.recruiter_decision);
       if (data.recruiter_notes) setNotes(data.recruiter_notes);
+      if (data.candidate_feedback) setCandidateFeedback(data.candidate_feedback);
     } catch (err: any) {
       alert(err?.response?.data?.detail || 'Failed to fetch session detail');
     } finally {
@@ -39,14 +42,39 @@ export const SessionDetail: React.FC = () => {
     if (!id) return;
     try {
       setSavingDecision(true);
-      await apiClient.updateDecision(Number(id), {
+      setDecisionNotice(null);
+      const res = await apiClient.updateDecision(Number(id), {
         recruiter_decision: decision,
-        recruiter_notes: notes
+        recruiter_notes: notes,
+        candidate_feedback: candidateFeedback
       });
-      alert('Recruiter hiring decision successfully recorded.');
+
+      const emailStatus = res.email_delivery?.status;
+      const emailDelivered = res.email_delivery?.delivered;
+      const emailMsg = res.email_delivery?.message || '';
+
+      if (emailDelivered) {
+        setDecisionNotice({
+          type: 'success',
+          text: `Decision saved to database! Candidate notified via email at ${session?.candidate?.email}.`
+        });
+      } else if (emailStatus === 'configuration_required' || emailStatus === 'delivery_failed') {
+        setDecisionNotice({
+          type: 'warning',
+          text: `Decision saved in database and updated in Candidate Portal. Email notice: ${emailMsg}`
+        });
+      } else {
+        setDecisionNotice({
+          type: 'success',
+          text: `Decision '${res.decision}' recorded successfully.`
+        });
+      }
       loadDetail();
     } catch (err: any) {
-      alert('Error updating decision');
+      setDecisionNotice({
+        type: 'error',
+        text: err?.response?.data?.detail || 'Failed to update recruiter decision.'
+      });
     } finally {
       setSavingDecision(false);
     }
@@ -271,22 +299,51 @@ export const SessionDetail: React.FC = () => {
           All AI evaluations provide evidence-based recommendations, but final hiring authority is exclusively reserved for you. Record your final decision below.
         </p>
 
+        {decisionNotice && (
+          <div style={{
+            padding: 14,
+            borderRadius: 8,
+            marginBottom: 20,
+            fontSize: 13,
+            backgroundColor: decisionNotice.type === 'success' ? '#e8f5e9' : decisionNotice.type === 'warning' ? '#fff3e0' : '#ffebee',
+            border: `1px solid ${decisionNotice.type === 'success' ? '#c8e6c9' : decisionNotice.type === 'warning' ? '#ffe0b2' : '#ffcdd2'}`,
+            color: decisionNotice.type === 'success' ? 'var(--success)' : decisionNotice.type === 'warning' ? 'var(--warning)' : 'var(--danger)'
+          }}>
+            {decisionNotice.text}
+          </div>
+        )}
+
         <form onSubmit={handleSaveDecision} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
             <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>Final Decision</label>
-            <select value={decision} onChange={(e) => setDecision(e.target.value)} style={{ width: '100%', maxWidth: 300 }}>
-              <option value="Hired">Hired (Extend Offer)</option>
+            <select value={decision} onChange={(e) => setDecision(e.target.value)} style={{ width: '100%', maxWidth: 320 }}>
+              <option value="Selected">Selected (Extend Offer)</option>
               <option value="Rejected">Rejected</option>
-              <option value="Under Review">Under Review (Need Committee Consensus)</option>
+              <option value="Under Review">Under Review (Committee Review)</option>
+              <option value="On Hold">On Hold (Pending Pool Evaluation)</option>
             </select>
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>Recruiter Notes & Justification</label>
+            <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>
+              Approved Candidate Feedback <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>(Shared with candidate on their dashboard & email)</span>
+            </label>
+            <textarea
+              rows={3}
+              value={candidateFeedback}
+              onChange={(e) => setCandidateFeedback(e.target.value)}
+              placeholder="Constructive feedback to share directly with the candidate..."
+              style={{ width: '100%' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>
+              Internal Recruiter Notes & Justification <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>(Confidential — visible only to recruiters)</span>
+            </label>
             <textarea
               rows={4}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Record justification, key interviewer observations, or team fit notes..."
+              placeholder="Record internal justification, interviewer observations, or confidential notes..."
               style={{ width: '100%' }}
             />
           </div>

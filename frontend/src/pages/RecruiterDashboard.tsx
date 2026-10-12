@@ -381,18 +381,18 @@ export const RecruiterDashboard: React.FC = () => {
             </p>
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ maxHeight: '420px', overflowY: 'auto', overflowX: 'auto', border: '1px solid var(--border-light)', borderRadius: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-light)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '12px 10px' }}>Candidate</th>
-                  <th style={{ padding: '12px 10px' }}>Target Position</th>
-                  <th style={{ padding: '12px 10px' }}>Scheduled Start</th>
-                  <th style={{ padding: '12px 10px' }}>Status</th>
-                  <th style={{ padding: '12px 10px' }}>Identity Verification</th>
-                  <th style={{ padding: '12px 10px' }}>AI Score</th>
-                  <th style={{ padding: '12px 10px' }}>Recruiter Decision</th>
-                  <th style={{ padding: '12px 10px' }}>Actions</th>
+              <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--bg-card)', zIndex: 10, boxShadow: '0 1px 0 var(--border-light)' }}>
+                <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '12px 10px', backgroundColor: 'var(--bg-card)' }}>Candidate</th>
+                  <th style={{ padding: '12px 10px', backgroundColor: 'var(--bg-card)' }}>Target Position</th>
+                  <th style={{ padding: '12px 10px', backgroundColor: 'var(--bg-card)' }}>Scheduled Start</th>
+                  <th style={{ padding: '12px 10px', backgroundColor: 'var(--bg-card)' }}>Status</th>
+                  <th style={{ padding: '12px 10px', backgroundColor: 'var(--bg-card)' }}>Identity Verification</th>
+                  <th style={{ padding: '12px 10px', backgroundColor: 'var(--bg-card)' }}>AI Score</th>
+                  <th style={{ padding: '12px 10px', backgroundColor: 'var(--bg-card)' }}>Recruiter Decision</th>
+                  <th style={{ padding: '12px 10px', backgroundColor: 'var(--bg-card)' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>

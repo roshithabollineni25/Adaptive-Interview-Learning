@@ -117,7 +117,7 @@ export const apiClient = {
     return res.data;
   },
 
-  updateDecision: async (sessionId: number, decision: { recruiter_decision: string; recruiter_notes?: string }): Promise<{ message: string; decision: string }> => {
+  updateDecision: async (sessionId: number, decision: { recruiter_decision: string; recruiter_notes?: string; candidate_feedback?: string }): Promise<{ message: string; decision: string; decision_at?: string; candidate_feedback?: string; email_delivery?: any }> => {
     const res = await api.patch(`/recruitment/sessions/${sessionId}/decision`, decision);
     return res.data;
   },

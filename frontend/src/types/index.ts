@@ -45,6 +45,9 @@ export interface CandidateInterviewScheduleItem {
   window_status: 'upcoming' | 'too_early' | 'open' | 'expired';
   identity_verified: boolean;
   interview_url: string;
+  decision_status?: 'Selected' | 'Rejected' | 'Decision Pending' | 'On Hold';
+  decision_at?: string;
+  candidate_feedback?: string;
   created_at: string;
 }
 
@@ -141,6 +144,10 @@ export interface InterviewSessionDetail {
   final_recommendation?: string;
   recruiter_decision?: string;
   recruiter_notes?: string;
+  candidate_feedback?: string;
+  decision_at?: string;
+  decision_notification_status?: string;
+  decision_notification_error?: string;
   skill_gap_analysis?: {
     match_percentage: number;
     demonstrated: string[];
