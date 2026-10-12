@@ -8,6 +8,35 @@ import {
   RefreshCw, Trash2, Clock
 } from 'lucide-react';
 
+const parseIsoDate = (val?: string | null): Date | null => {
+  if (!val) return null;
+  const str = String(val).trim();
+  const d = new Date(str.endsWith('Z') || str.includes('+') ? str : `${str}Z`);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const formatIstDate = (val?: string | null): string => {
+  const d = parseIsoDate(val);
+  if (!d) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  }).format(d);
+};
+
+const formatIstTime = (val?: string | null): string => {
+  const d = parseIsoDate(val);
+  if (!d) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }).format(d);
+};
+
 export const RecruiterDashboard: React.FC = () => {
   const [jobs, setJobs] = useState<JobDescription[]>([]);
   const [candidates, setCandidates] = useState<CandidateSummary[]>([]);
@@ -406,8 +435,8 @@ export const RecruiterDashboard: React.FC = () => {
                     <td style={{ padding: '14px 10px' }}>
                       {s.scheduled_start ? (
                         <div>
-                          <div>{new Date(s.scheduled_start).toLocaleDateString()}</div>
-                          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{new Date(s.scheduled_start).toLocaleTimeString()}</div>
+                          <div>{formatIstDate(s.scheduled_start)}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatIstTime(s.scheduled_start)}</div>
                         </div>
                       ) : (
                         <span style={{ color: 'var(--text-muted)' }}>Immediate</span>
