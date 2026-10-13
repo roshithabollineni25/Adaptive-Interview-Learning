@@ -138,8 +138,11 @@ export const apiClient = {
     return res.data;
   },
 
-  verifyIdentityProbe: async (token: string, probeFrameBase64: string): Promise<{ verified: boolean; message: string; similarity_score?: number; first_question?: any }> => {
-    const res = await api.post(`/interview/${token}/verify-identity`, { probe_frame_base64: probeFrameBase64 });
+  verifyIdentityProbe: async (token: string, probeFrameBase64: string, idCardFrameBase64?: string): Promise<{ verified: boolean; message: string; similarity_score?: number; verification_details?: any; first_question?: any }> => {
+    const res = await api.post(`/interview/${token}/verify-identity`, { 
+      probe_frame_base64: probeFrameBase64,
+      id_card_frame_base64: idCardFrameBase64 
+    });
     return res.data;
   },
 
