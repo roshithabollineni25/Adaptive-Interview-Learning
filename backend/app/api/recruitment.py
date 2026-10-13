@@ -1,7 +1,10 @@
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -21,7 +24,7 @@ from app.services.document_parser import extract_document_text
 from app.services.llm_service import llm_service
 from app.services.email_service import email_service
 from app.services.interview_engine import interview_engine
-from app.services.identity_service import compare_faces
+from app.services.identity_service import compare_faces, verify_id_card_document
 
 router = APIRouter(prefix="/recruitment", tags=["Recruitment"])
 
@@ -246,36 +249,51 @@ def update_recruiter_decision(
 
     # Only send email when candidate exists and either decision changed or notification hasn't been accepted yet
     should_send_email = candidate and (
-        old_decision != new_decision or session.decision_notification_status != "accepted"
+        old_decision != new_decision or getattr(session, "decision_notification_status", None) != "accepted"
     )
 
     if should_send_email:
-        email_res = email_service.send_hiring_decision_notification(
-            candidate_email=candidate.email,
-            candidate_name=candidate.full_name,
-            job_title=job.title if job else "Target Position",
-            decision=new_decision,
-            candidate_feedback=session.candidate_feedback
-        )
-        session.decision_notification_status = email_res.get("status", "pending")
-        session.decision_notification_error = email_res.get("message")
-        email_delivery_report = email_res
+        try:
+            email_res = email_service.send_hiring_decision_notification(
+                candidate_email=candidate.email,
+                candidate_name=candidate.full_name,
+                job_title=job.title if job else "Target Position",
+                decision=new_decision,
+                candidate_feedback=getattr(session, "candidate_feedback", None)
+            )
+            session.decision_notification_status = email_res.get("status", "pending")
+            session.decision_notification_error = email_res.get("message")
+            email_delivery_report = email_res
+        except Exception as mail_err:
+            logger.error(f"Error executing email notification: {mail_err}")
+            session.decision_notification_status = "delivery_failed"
+            session.decision_notification_error = str(mail_err)
+            email_delivery_report = {
+                "status": "delivery_failed",
+                "delivered": False,
+                "message": f"Email dispatch failed: {str(mail_err)}"
+            }
     else:
         email_delivery_report = {
-            "status": session.decision_notification_status or "unchanged",
-            "delivered": session.decision_notification_status == "accepted",
+            "status": getattr(session, "decision_notification_status", None) or "unchanged",
+            "delivered": getattr(session, "decision_notification_status", None) == "accepted",
             "message": "Decision unchanged; email notification previously processed."
         }
 
-    # Persist the decision in database
-    db.commit()
-    db.refresh(session)
+    try:
+        # Persist the decision in database
+        db.commit()
+        db.refresh(session)
+    except Exception as db_err:
+        db.rollback()
+        logger.error(f"Failed to persist recruiter decision: {db_err}")
+        raise HTTPException(status_code=500, detail=f"Database error saving decision: {str(db_err)}")
 
     return {
         "message": f"Hiring decision '{new_decision}' successfully recorded in database.",
         "decision": session.recruiter_decision,
-        "decision_at": session.decision_at,
-        "candidate_feedback": session.candidate_feedback,
+        "decision_at": getattr(session, "decision_at", None),
+        "candidate_feedback": getattr(session, "candidate_feedback", None),
         "email_delivery": email_delivery_report
     }
 
@@ -434,8 +452,23 @@ def verify_candidate_identity(token: str, probe: IdentityVerificationProbe, db: 
         return {
             "verified": False,
             "message": result.get("reason", "Identity verification failed. Please try again or contact support."),
-            "similarity_score": result.get("similarity_score", 0.0)
+            "similarity_score": result.get("similarity_score", 0.0),
+            "stage": result.get("stage", "identity_comparison")
         }
+
+    # If ID card frame is provided, process ID card document check
+    id_card_result = None
+    if probe.id_card_frame_base64:
+        id_card_result = verify_id_card_document(probe.id_card_frame_base64, candidate.full_name)
+        result["id_card_verification"] = id_card_result
+        if not id_card_result["verified"]:
+            return {
+                "verified": False,
+                "message": f"ID Card Verification Issue: {id_card_result['reason']}",
+                "similarity_score": result.get("similarity_score", 0.0),
+                "stage": "id_card_verification",
+                "id_card_details": id_card_result
+            }
 
     # Mark identity verified and transition session to in_progress
     session.identity_verified = True
@@ -449,6 +482,13 @@ def verify_candidate_identity(token: str, probe: IdentityVerificationProbe, db: 
     return {
         "verified": True,
         "message": "Identity verified successfully. Technical interview initialized.",
+        "similarity_score": result.get("similarity_score", 1.0),
+        "verification_details": {
+            "stage": result.get("stage", "identity_comparison"),
+            "similarity_score": result.get("similarity_score", 1.0),
+            "liveness_indicators": result.get("liveness_indicators", {}),
+            "id_card_verification": id_card_result or {"status": "bypassed_or_not_provided"}
+        },
         "first_question": {
             "id": first_q.id,
             "order_index": first_q.order_index,
@@ -492,13 +532,72 @@ def log_integrity_event(token: str, event_in: IntegrityEventCreate, db: Session 
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # If session is already completed, ignore subsequent proctor events
+    if session.status == InterviewStatus.COMPLETED or session.status == "completed":
+        return {
+            "status": "session_already_completed",
+            "terminated": True,
+            "reason": "Interview has concluded."
+        }
+
+    # Deduplication: Check if an identical event type was logged in the last 4 seconds to prevent camera noise flooding
+    now = datetime.utcnow()
+    recent_dup = None
+    if session.integrity_events:
+        for prev in reversed(session.integrity_events):
+            if prev.event_type == event_in.event_type:
+                time_diff = (now - prev.timestamp).total_seconds() if prev.timestamp else 999
+                if time_diff < 4:
+                    recent_dup = prev
+                    break
+
+    if recent_dup:
+        return {
+            "status": "deduplicated",
+            "message": "Repeated event within debounce threshold suppressed."
+        }
+
     event = IntegrityEvent(
         session_id=session.id,
         event_type=event_in.event_type,
         severity=event_in.severity or "low",
         confidence=event_in.confidence or 1.0,
-        metadata_info=event_in.metadata_info
+        metadata_info=event_in.metadata_info,
+        timestamp=now
     )
     db.add(event)
     db.commit()
-    return {"status": "logged"}
+
+    # Re-fetch events count for threshold evaluation
+    all_events = db.query(IntegrityEvent).filter(IntegrityEvent.session_id == session.id).all()
+    tab_switches = [e for e in all_events if e.event_type in ["tab_switch", "fullscreen_exit"]]
+    identity_mismatches = [e for e in all_events if e.event_type in ["identity_mismatch", "continuous_identity_mismatch"]]
+    
+    terminated = False
+    termination_reason = None
+
+    # Threshold 1: 3 or more tab switch/fullscreen exit events
+    if len(tab_switches) >= 3:
+        terminated = True
+        termination_reason = f"Session terminated: Exceeded maximum allowed tab switches (3 recorded)."
+    # Threshold 2: Confirmed identity mismatch during continuous monitoring
+    elif len(identity_mismatches) >= 2 or (len(identity_mismatches) >= 1 and event_in.event_type == "continuous_identity_mismatch"):
+        terminated = True
+        termination_reason = "Session terminated: Persistent facial identity mismatch detected during continuous monitoring."
+    # Threshold 3: Overall integrity anomalies exceeding 5 unique alerts
+    elif len(all_events) >= 6:
+        terminated = True
+        termination_reason = "Session terminated: Cumulative proctor integrity anomalies exceeded allowable threshold."
+
+    if terminated:
+        interview_engine.finalize_interview(session, db)
+        session.recruiter_notes = f"{session.recruiter_notes or ''}\n[PROCTOR TERMINATION]: {termination_reason}".strip()
+        db.commit()
+
+    return {
+        "status": "logged",
+        "total_warnings": len(all_events),
+        "tab_switches_count": len(tab_switches),
+        "terminated": terminated,
+        "termination_reason": termination_reason
+    }
