@@ -140,6 +140,10 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db), user: Use
             "question_text": q.question_text,
             "competency_tested": q.competency_tested,
             "difficulty_level": q.difficulty_level,
+            "question_type": getattr(q, "question_type", "open_ended") or "open_ended",
+            "options": getattr(q, "options", []) or [],
+            "answer_mode": getattr(q, "answer_mode", "typed") or "typed",
+            "voice_transcript": getattr(q, "voice_transcript", None),
             "candidate_answer": q.candidate_answer,
             "score": q.score,
             "rubric_scores": q.rubric_scores,
@@ -187,6 +191,13 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db), user: Use
             "experience_level": "Mid-Senior",
             "created_at": s.created_at
         }
+
+    if (status_val == "completed" or s.status == InterviewStatus.COMPLETED) and not s.evidence_report:
+        try:
+            interview_engine.finalize_interview(s, db)
+            db.refresh(s)
+        except Exception as e:
+            logger.warning(f"Could not auto-finalize report for completed session {session_id}: {e}")
 
     return {
         "id": s.id,
@@ -389,7 +400,7 @@ def get_candidate_interview(token: str, db: Session = Depends(get_db)):
 
     time_check = interview_engine.verify_time_window(session)
 
-    # Active pending question
+    # Active pending question with automatic reload recovery
     active_question = None
     if session.identity_verified and session.status in ["in_progress", "setup"]:
         for q in session.questions:
@@ -399,9 +410,24 @@ def get_candidate_interview(token: str, db: Session = Depends(get_db)):
                     "order_index": q.order_index,
                     "question_text": q.question_text,
                     "competency_tested": q.competency_tested,
-                    "difficulty_level": q.difficulty_level
+                    "difficulty_level": q.difficulty_level,
+                    "question_type": getattr(q, "question_type", "open_ended") or "open_ended",
+                    "options": getattr(q, "options", []) or []
                 }
                 break
+
+        # Reload Recovery: If in progress and all existing questions are answered but total < max, generate next question!
+        if not active_question and session.status == "in_progress" and len(session.questions) < settings.MAX_QUESTIONS_PER_SESSION:
+            next_q = interview_engine.generate_next_question(session, db)
+            active_question = {
+                "id": next_q.id,
+                "order_index": next_q.order_index,
+                "question_text": next_q.question_text,
+                "competency_tested": next_q.competency_tested,
+                "difficulty_level": next_q.difficulty_level,
+                "question_type": getattr(next_q, "question_type", "open_ended") or "open_ended",
+                "options": getattr(next_q, "options", []) or []
+            }
 
     return {
         "session_token": session.session_token,
@@ -435,7 +461,16 @@ def verify_candidate_identity(token: str, probe: IdentityVerificationProbe, db: 
             detail="Candidate has not enrolled an identity reference. Please complete identity enrollment in the Candidate Portal first."
         )
 
-    # Run genuine face verification
+    # Mandatory ID card requirement (Priority 2)
+    if not probe.id_card_frame_base64 or not str(probe.id_card_frame_base64).strip():
+        return {
+            "verified": False,
+            "message": "Physical ID card document capture is required before starting the interview.",
+            "similarity_score": 0.0,
+            "stage": "id_card_verification"
+        }
+
+    # Run genuine face verification against enrolled reference
     result = compare_faces(candidate.enrolled_face_reference, probe.probe_frame_base64)
     
     if not result["verified"]:
@@ -456,19 +491,17 @@ def verify_candidate_identity(token: str, probe: IdentityVerificationProbe, db: 
             "stage": result.get("stage", "identity_comparison")
         }
 
-    # If ID card frame is provided, process ID card document check
-    id_card_result = None
-    if probe.id_card_frame_base64:
-        id_card_result = verify_id_card_document(probe.id_card_frame_base64, candidate.full_name)
-        result["id_card_verification"] = id_card_result
-        if not id_card_result["verified"]:
-            return {
-                "verified": False,
-                "message": f"ID Card Verification Issue: {id_card_result['reason']}",
-                "similarity_score": result.get("similarity_score", 0.0),
-                "stage": "id_card_verification",
-                "id_card_details": id_card_result
-            }
+    # Process mandatory ID card document check
+    id_card_result = verify_id_card_document(probe.id_card_frame_base64, candidate.full_name)
+    result["id_card_verification"] = id_card_result
+    if not id_card_result["verified"]:
+        return {
+            "verified": False,
+            "message": f"ID Card Verification Issue: {id_card_result['reason']}",
+            "similarity_score": result.get("similarity_score", 0.0),
+            "stage": "id_card_verification",
+            "id_card_details": id_card_result
+        }
 
     # Mark identity verified and transition session to in_progress
     session.identity_verified = True
@@ -487,14 +520,16 @@ def verify_candidate_identity(token: str, probe: IdentityVerificationProbe, db: 
             "stage": result.get("stage", "identity_comparison"),
             "similarity_score": result.get("similarity_score", 1.0),
             "liveness_indicators": result.get("liveness_indicators", {}),
-            "id_card_verification": id_card_result or {"status": "bypassed_or_not_provided"}
+            "id_card_verification": id_card_result
         },
         "first_question": {
             "id": first_q.id,
             "order_index": first_q.order_index,
             "question_text": first_q.question_text,
             "competency_tested": first_q.competency_tested,
-            "difficulty_level": first_q.difficulty_level
+            "difficulty_level": first_q.difficulty_level,
+            "question_type": getattr(first_q, "question_type", "open_ended") or "open_ended",
+            "options": getattr(first_q, "options", []) or []
         }
     }
 
@@ -518,12 +553,44 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
     if not active_q:
         raise HTTPException(status_code=400, detail="No active question waiting for response")
 
-    evaluation = interview_engine.submit_and_evaluate_answer(session, active_q, answer_in.answer_text, db)
+    # Submit and evaluate answer reliably
+    eval_result = interview_engine.submit_and_evaluate_answer(
+        session=session,
+        question=active_q,
+        answer_text=answer_in.answer_text,
+        db=db,
+        answer_mode=answer_in.answer_mode or "typed",
+        selected_option=answer_in.selected_option,
+        voice_transcript=answer_in.voice_transcript
+    )
+
+    next_q = eval_result.get("next_question")
+    next_q_data = None
+    if next_q:
+        next_q_data = {
+            "id": next_q.id,
+            "order_index": next_q.order_index,
+            "question_text": next_q.question_text,
+            "competency_tested": next_q.competency_tested,
+            "difficulty_level": next_q.difficulty_level,
+            "question_type": getattr(next_q, "question_type", "open_ended") or "open_ended",
+            "options": getattr(next_q, "options", []) or []
+        }
+
     return {
         "status": session.status,
         "question_id": active_q.id,
-        "is_interview_complete": session.status == "completed",
-        "next_question_available": session.status != "completed"
+        "is_interview_complete": eval_result.get("is_interview_complete", session.status == "completed"),
+        "next_question_available": next_q is not None,
+        "next_question": next_q_data,
+        "total_questions_completed": len([q for q in session.questions if q.candidate_answer is not None]),
+        "evaluation": {
+            "score": active_q.score,
+            "strengths": active_q.strengths,
+            "weaknesses": active_q.weaknesses,
+            "adaptation_reason": active_q.adaptation_reason,
+            "next_difficulty": session.current_difficulty
+        }
     }
 
 @interview_router.post("/{token}/integrity-event")
@@ -540,12 +607,39 @@ def log_integrity_event(token: str, event_in: IntegrityEventCreate, db: Session 
             "reason": "Interview has concluded."
         }
 
+    candidate = session.candidate
+    actual_event_type = event_in.event_type
+    severity = event_in.severity or "low"
+    confidence = event_in.confidence or 1.0
+    meta = event_in.metadata_info or {}
+
+    # Continuous frame verification if frame_base64 is sent
+    if event_in.frame_base64 and candidate and candidate.enrolled_face_reference:
+        try:
+            face_result = identity_service.compare_faces(
+                candidate.enrolled_face_reference,
+                event_in.frame_base64
+            )
+            sim = face_result.get("similarity", 0.0)
+            meta["face_similarity"] = sim
+            meta["continuous_check"] = True
+            
+            if not face_result.get("match", False):
+                actual_event_type = "continuous_identity_mismatch"
+                severity = "critical"
+                confidence = float(round(1.0 - sim, 3))
+                meta["face_verified"] = False
+            else:
+                meta["face_verified"] = True
+        except Exception as frame_err:
+            logger.warning(f"Continuous frame verification failed: {frame_err}")
+
     # Deduplication: Check if an identical event type was logged in the last 4 seconds to prevent camera noise flooding
     now = datetime.utcnow()
     recent_dup = None
     if session.integrity_events:
         for prev in reversed(session.integrity_events):
-            if prev.event_type == event_in.event_type:
+            if prev.event_type == actual_event_type:
                 time_diff = (now - prev.timestamp).total_seconds() if prev.timestamp else 999
                 if time_diff < 4:
                     recent_dup = prev
@@ -560,10 +654,10 @@ def log_integrity_event(token: str, event_in: IntegrityEventCreate, db: Session 
 
     event = IntegrityEvent(
         session_id=session.id,
-        event_type=event_in.event_type,
-        severity=event_in.severity or "low",
-        confidence=event_in.confidence or 1.0,
-        metadata_info=event_in.metadata_info,
+        event_type=actual_event_type,
+        severity=severity,
+        confidence=confidence,
+        metadata_info=meta,
         timestamp=now
     )
     db.add(event)

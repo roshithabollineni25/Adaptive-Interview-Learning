@@ -146,17 +146,38 @@ export const apiClient = {
     return res.data;
   },
 
-  submitAnswer: async (token: string, answerText: string): Promise<any> => {
-    const res = await api.post(`/interview/${token}/submit-answer`, { answer_text: answerText });
+  submitAnswer: async (
+    token: string,
+    answerText: string,
+    options?: {
+      answerMode?: 'typed' | 'voice' | 'mcq' | string;
+      selectedOption?: string;
+      voiceTranscript?: string;
+    }
+  ): Promise<any> => {
+    const res = await api.post(`/interview/${token}/submit-answer`, {
+      answer_text: answerText,
+      answer_mode: options?.answerMode || 'typed',
+      selected_option: options?.selectedOption,
+      voice_transcript: options?.voiceTranscript
+    });
     return res.data;
   },
 
-  logIntegrityEvent: async (token: string, eventType: string, severity?: string, confidence?: number, metadata?: any): Promise<any> => {
+  logIntegrityEvent: async (
+    token: string,
+    eventType: string,
+    severity?: string,
+    confidence?: number,
+    metadata?: any,
+    frameBase64?: string
+  ): Promise<any> => {
     const res = await api.post(`/interview/${token}/integrity-event`, {
       event_type: eventType,
       severity: severity || 'low',
       confidence: confidence || 1.0,
-      metadata_info: metadata
+      metadata_info: metadata,
+      frame_base64: frameBase64
     });
     return res.data;
   },

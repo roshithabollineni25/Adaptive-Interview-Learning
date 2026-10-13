@@ -118,6 +118,10 @@ export interface QuestionDetail {
   evidence_quote?: string;
   confidence_level?: string;
   adaptation_reason?: string;
+  question_type?: 'open_ended' | 'multiple_choice' | 'fill_blank' | string;
+  options?: string[];
+  answer_mode?: 'typed' | 'voice' | 'mcq' | string;
+  voice_transcript?: string;
   answered_at?: string;
 }
 
@@ -205,5 +209,7 @@ export interface CandidateInterviewView {
     question_text: string;
     competency_tested: string;
     difficulty_level: string;
+    question_type?: 'open_ended' | 'multiple_choice' | 'fill_blank' | string;
+    options?: string[];
   };
 }

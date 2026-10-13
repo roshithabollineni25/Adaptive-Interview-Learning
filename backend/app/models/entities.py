@@ -147,6 +147,12 @@ class InterviewQuestion(Base):
     candidate_answer = Column(Text, nullable=True)
     answered_at = Column(DateTime, nullable=True)
     
+    # Question format & answer modes (Priority 4)
+    question_type = Column(String(50), default="open_ended")  # open_ended, multiple_choice, fill_blank
+    options = Column(JSON, nullable=True)                     # List of choices for multiple_choice
+    answer_mode = Column(String(50), default="typed")         # typed, voice_transcript, option_selected
+    voice_transcript = Column(Text, nullable=True)            # Original voice-to-text transcript if voice used
+    
     # Adaptive Assessment
     score = Column(Float, nullable=True)  # 0 to 10
     rubric_scores = Column(JSON, nullable=True)  # {technical: 8, clarity: 7, depth: 8}

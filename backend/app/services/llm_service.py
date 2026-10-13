@@ -14,6 +14,8 @@ class QuestionOutputSchema(BaseModel):
     competency_tested: str = Field(min_length=2)
     difficulty_level: str = Field(default="Medium")
     expected_criteria: str = Field(default="Technical accuracy, architecture trade-offs, and communication clarity.")
+    question_type: str = Field(default="open_ended")  # open_ended, multiple_choice, fill_blank
+    options: Optional[List[str]] = Field(default_factory=list)
 
 class AnswerEvaluationSchema(BaseModel):
     score: float = Field(ge=0.0, le=10.0)
@@ -61,12 +63,14 @@ class LLMService:
         from google import genai
         from google.genai import types, errors
 
-        client = genai.Client(api_key=api_key)
+        # Enforce tight 10s timeout to prevent 30-60s candidate UI hangs on network stalls
+        client = genai.Client(api_key=api_key, http_options={"timeout": 10.0})
         target_model = settings.GEMINI_MODEL
+        if not target_model or "3.5" in target_model or "3.8" in target_model:
+            target_model = "gemini-2.5-flash"
 
-        # Primary model and resilient fallback candidates for the active API key
         candidate_models = [target_model]
-        for fallback in ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"]:
+        for fallback in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
             if fallback not in candidate_models:
                 candidate_models.append(fallback)
 
@@ -85,21 +89,24 @@ class LLMService:
                 if model_name != target_model:
                     logger.info(f"Successfully generated content using fallback model: {model_name}")
                 return response.text
-            except errors.APIError as e:
+            except (errors.APIError, Exception) as e:
                 last_error = e
-                # Check for model not found (404) or transient unavailable / high demand (503)
-                if "not found" in str(e).lower() or "404" in str(e) or "503" in str(e) or "unavailable" in str(e).lower():
-                    logger.warning(f"Gemini model {model_name} unavailable ({e.code if hasattr(e, 'code') else type(e).__name__}). Trying next fallback candidate...")
-                    continue
-                elif "429" in str(e) or "resource_exhausted" in str(e).lower():
+                err_str = str(e).lower()
+                # Fast fail on network timeouts or quota exceeded without wasting time trying other models
+                if "timeout" in err_str or "timed out" in err_str:
+                    logger.warning(f"Gemini API network timeout with {model_name}. Failing fast to fallback baseline.")
+                    raise RuntimeError(f"Gemini API network timeout: {e}")
+                elif "429" in err_str or "resource_exhausted" in err_str:
                     logger.error(f"Gemini API Rate Limit or Quota Exceeded: {e}")
                     raise RuntimeError(f"Gemini API rate limit or quota exceeded: {e}")
-                elif "401" in str(e) or "403" in str(e) or "api_key_invalid" in str(e).lower():
+                elif "401" in err_str or "403" in err_str or "api_key_invalid" in err_str:
                     logger.error(f"Gemini API Authentication Failed: Invalid API key: {e}")
                     raise RuntimeError(f"Invalid GEMINI_API_KEY: {e}")
+                elif "not found" in err_str or "404" in err_str or "503" in err_str or "unavailable" in err_str:
+                    logger.warning(f"Gemini model {model_name} unavailable. Trying next candidate...")
+                    continue
                 raise
 
-        # If all candidates exhausted, raise last recorded error
         if last_error:
             raise last_error
         raise RuntimeError("No Gemini models succeeded.")
@@ -328,11 +335,65 @@ class LLMService:
             }
 
         else:
-            return {
-                "question": "Could you walk through how you approach architecture, state management, and edge-case handling in full-stack applications?",
-                "competency_tested": "Architecture & Engineering Design",
-                "difficulty_level": "Medium",
-                "expected_criteria": "Trade-offs considered, component modularity, and operational reliability."
-            }
+            # Adaptive question generation based on prompt attributes
+            # Detect Question # order index
+            order_match = re.search(r"question\s*#(\d+)", lower)
+            order_idx = int(order_match.group(1)) if order_match else 1
+
+            # Detect role or job title
+            role_match = re.search(r"position\s*['\"]([^'\"]+)['\"]", prompt, re.IGNORECASE)
+            job_title = role_match.group(1) if role_match else "Software Engineering"
+
+            # Detect target difficulty
+            diff_match = re.search(r"target difficulty:\s*(\w+)", lower)
+            difficulty = diff_match.group(1).capitalize() if diff_match else "Medium"
+
+            # Vary question types adaptively across trajectory
+            if order_idx == 2 or "multiple choice" in lower:
+                return {
+                    "question": f"In designing scalable microservices for {job_title}, which architectural pattern is most effective for preventing cascading system failures during downstream outages?",
+                    "competency_tested": "Resilient Architecture",
+                    "difficulty_level": difficulty,
+                    "expected_criteria": "Selection of Circuit Breaker with bulkhead isolation pattern.",
+                    "question_type": "multiple_choice",
+                    "options": [
+                        "A) Circuit Breaker with Bulkhead Isolation",
+                        "B) Synchronous RPC retry with exponential escalation",
+                        "C) Centralized in-memory shared state lock",
+                        "D) Full database table lock per client session"
+                    ]
+                }
+            elif order_idx == 3 or "fill" in lower:
+                return {
+                    "question": "In distributed consensus protocols, split-brain scenarios are prevented when a cluster requires a strict _____ of nodes to commit state transitions.",
+                    "competency_tested": "Distributed Consistency",
+                    "difficulty_level": difficulty,
+                    "expected_criteria": "quorum (or majority)",
+                    "question_type": "fill_blank",
+                    "options": []
+                }
+            elif order_idx == 4:
+                return {
+                    "question": f"Which isolation level in relational databases guarantees protection against dirty reads, non-repeatable reads, and phantom reads?",
+                    "competency_tested": "Database Architecture",
+                    "difficulty_level": difficulty,
+                    "expected_criteria": "Serializable isolation level.",
+                    "question_type": "multiple_choice",
+                    "options": [
+                        "A) Serializable",
+                        "B) Repeatable Read",
+                        "C) Read Committed",
+                        "D) Read Uncommitted"
+                    ]
+                }
+            else:
+                return {
+                    "question": f"Walk through how you would architect a resilient, high-throughput backend service for '{job_title}', detailing API design, database consistency, and caching strategy.",
+                    "competency_tested": "System Architecture & Scalability",
+                    "difficulty_level": difficulty,
+                    "expected_criteria": "Clear decomposition, data consistency trade-offs, cache invalidation, and monitoring telemetry.",
+                    "question_type": "open_ended",
+                    "options": []
+                }
 
 llm_service = LLMService()

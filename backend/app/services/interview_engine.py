@@ -1,5 +1,5 @@
 import uuid
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
@@ -122,7 +122,8 @@ class InterviewEngine:
 
         system_prompt = (
             "You are an expert technical interviewer conducting an adaptive interview. "
-            "Output strictly a JSON object with keys: question, competency_tested, difficulty_level, expected_criteria."
+            "Output strictly a JSON object with keys: question, competency_tested, difficulty_level, expected_criteria, question_type, options. "
+            "question_type must be 'open_ended', 'multiple_choice' (include 4 options in 'options'), or 'fill_blank' (question sentence has a blank '_____')."
         )
         user_prompt = (
             f"Generate Question #{order_index} for the position '{job.title}'.\n"
@@ -136,6 +137,8 @@ class InterviewEngine:
         competency = llm_res.get("competency_tested", "Technical Architecture")
         difficulty = llm_res.get("difficulty_level", session.current_difficulty)
         criteria = llm_res.get("expected_criteria", "Depth, accuracy, and clear communication.")
+        q_type = llm_res.get("question_type", "open_ended")
+        options = llm_res.get("options", [])
 
         new_q = InterviewQuestion(
             session_id=session.id,
@@ -143,7 +146,9 @@ class InterviewEngine:
             question_text=question_text,
             competency_tested=competency,
             difficulty_level=difficulty,
-            expected_criteria=criteria
+            expected_criteria=criteria,
+            question_type=q_type,
+            options=options
         )
         db.add(new_q)
         db.commit()
@@ -155,10 +160,17 @@ class InterviewEngine:
         session: InterviewSession, 
         question: InterviewQuestion, 
         answer_text: str, 
-        db: Session
+        db: Session,
+        answer_mode: str = "typed",
+        selected_option: Optional[str] = None,
+        voice_transcript: Optional[str] = None
     ) -> Dict[str, Any]:
+        # Immediately persist candidate's response to database to avoid loss
         question.candidate_answer = answer_text
+        question.answer_mode = answer_mode
+        question.voice_transcript = voice_transcript or (answer_text if answer_mode == "voice_transcript" else None)
         question.answered_at = datetime.utcnow()
+        db.commit()
 
         system_prompt = (
             "You are an evidence-based assessment engine. Evaluate the candidate's answer against the question and criteria. "
@@ -169,6 +181,7 @@ class InterviewEngine:
         )
         user_prompt = (
             f"Question: {question.question_text}\n"
+            f"Question Type: {getattr(question, 'question_type', 'open_ended')}\n"
             f"Expected Criteria: {question.expected_criteria}\n"
             f"Candidate Answer: {answer_text}\n"
             f"Current Difficulty: {question.difficulty_level}\n"
@@ -200,14 +213,19 @@ class InterviewEngine:
         db.commit()
 
         # Check if interview question limit reached
+        next_q = None
         if len(session.questions) >= settings.MAX_QUESTIONS_PER_SESSION:
             InterviewEngine.finalize_interview(session, db)
         else:
             session.current_question_index += 1
-            InterviewEngine.generate_next_question(session, db)
+            next_q = InterviewEngine.generate_next_question(session, db)
             db.commit()
 
-        return evaluation
+        return {
+            "evaluation": evaluation,
+            "next_question": next_q,
+            "is_interview_complete": session.status == InterviewStatus.COMPLETED or session.status == "completed"
+        }
 
     @staticmethod
     def finalize_interview(session: InterviewSession, db: Session):

@@ -33,6 +33,18 @@ async def lifespan(app: FastAPI):
                     if col_name not in existing_cols:
                         conn.execute(text(f"ALTER TABLE interview_sessions ADD COLUMN {col_name} {col_type};"))
                         conn.commit()
+            if "interview_questions" in inspector.get_table_names():
+                existing_q_cols = {c["name"] for c in inspector.get_columns("interview_questions")}
+                new_q_columns = [
+                    ("question_type", "VARCHAR(50) DEFAULT 'open_ended'"),
+                    ("options", "JSON"),
+                    ("answer_mode", "VARCHAR(50) DEFAULT 'typed'"),
+                    ("voice_transcript", "TEXT"),
+                ]
+                for col_name, col_type in new_q_columns:
+                    if col_name not in existing_q_cols:
+                        conn.execute(text(f"ALTER TABLE interview_questions ADD COLUMN {col_name} {col_type};"))
+                        conn.commit()
     except Exception as e:
         import logging
         logging.getLogger("uvicorn.error").warning(f"Database column auto-migration warning: {e}")

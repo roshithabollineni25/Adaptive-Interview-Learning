@@ -163,7 +163,7 @@ def _run_full_recruiter_and_candidate_workflow():
     assert enroll_res.status_code == 200
     assert enroll_res.json()["status"] == "success"
 
-    # 8. Attempt verification probe with invalid frame -> Must fail gate
+    # 8. Attempt verification probe with invalid frame or missing ID card -> Must fail gate
     empty_frame = np.ones((400, 400, 3), dtype=np.uint8) * 50
     _, empty_buf = cv2.imencode('.jpg', empty_frame)
     empty_b64 = "data:image/jpeg;base64," + base64.b64encode(empty_buf).decode('utf-8')
@@ -173,15 +173,26 @@ def _run_full_recruiter_and_candidate_workflow():
     assert probe_fail.status_code == 200
     assert probe_fail.json()["verified"] is False
 
-    # 9. Verify with genuine enrolled face probe -> Must unlock gate & Q1
+    # Create synthetic ID card frame with realistic rectangular shape and text
+    id_card_canvas = np.ones((300, 450, 3), dtype=np.uint8) * 240
+    cv2.rectangle(id_card_canvas, (20, 20), (430, 280), (70, 70, 70), 3)
+    cv2.putText(id_card_canvas, "OFFICIAL IDENTITY CARD", (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (20, 20, 20), 2)
+    cv2.putText(id_card_canvas, "DR. SARAH CHEN", (40, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (50, 50, 50), 2)
+    cv2.rectangle(id_card_canvas, (40, 130), (140, 250), (120, 120, 120), 2)
+    _, id_buf = cv2.imencode('.jpg', id_card_canvas)
+    id_card_b64 = "data:image/jpeg;base64," + base64.b64encode(id_buf).decode('utf-8')
+
+    # 9. Verify with genuine enrolled face probe and mandatory ID card -> Must unlock gate & Q1
     probe_pass = client.post(f"/api/interview/{session_token}/verify-identity", json={
-        "probe_frame_base64": face_b64
+        "probe_frame_base64": face_b64,
+        "id_card_frame_base64": id_card_b64
     })
     assert probe_pass.status_code == 200
     assert probe_pass.json()["verified"] is True
     assert "first_question" in probe_pass.json()
     q1 = probe_pass.json()["first_question"]
     assert q1["order_index"] == 1
+    assert "question_type" in q1
 
     # 10. Candidate answers questions adaptively
     for idx in range(1, 6):

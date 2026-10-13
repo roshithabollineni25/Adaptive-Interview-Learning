@@ -84,12 +84,16 @@ class IdentityVerificationProbe(BaseModel):
 # Interview Session schemas
 class QuestionAnswerSubmit(BaseModel):
     answer_text: str
+    answer_mode: Optional[str] = "typed"  # typed, voice_transcript, option_selected
+    selected_option: Optional[str] = None
+    voice_transcript: Optional[str] = None
 
 class IntegrityEventCreate(BaseModel):
     event_type: str
     severity: Optional[str] = "low"
     confidence: Optional[float] = 1.0
     metadata_info: Optional[Dict[str, Any]] = None
+    frame_base64: Optional[str] = None
 
 class RecruiterDecisionUpdate(BaseModel):
     recruiter_decision: str  # Selected, Rejected, Under Review, On Hold, Hired
