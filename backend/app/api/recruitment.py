@@ -613,6 +613,10 @@ def log_integrity_event(token: str, event_in: IntegrityEventCreate, db: Session 
     confidence = event_in.confidence or 1.0
     meta = event_in.metadata_info or {}
 
+    face_verification_status = "not_evaluated"
+    face_similarity_score = 0.0
+    face_anomaly_reason = None
+
     # Continuous frame verification if frame_base64 is sent
     if event_in.frame_base64 and candidate and candidate.enrolled_face_reference:
         try:
@@ -620,19 +624,51 @@ def log_integrity_event(token: str, event_in: IntegrityEventCreate, db: Session 
                 candidate.enrolled_face_reference,
                 event_in.frame_base64
             )
-            sim = face_result.get("similarity", 0.0)
+            sim = face_result.get("similarity_score", 0.0)
+            face_similarity_score = sim
+            is_verified = face_result.get("verified", False)
             meta["face_similarity"] = sim
             meta["continuous_check"] = True
+            meta["stage"] = face_result.get("stage", "continuous_monitoring")
+            meta["reason"] = face_result.get("reason", "")
             
-            if not face_result.get("match", False):
-                actual_event_type = "continuous_identity_mismatch"
-                severity = "critical"
+            if not is_verified:
+                integrity_anomaly = face_result.get("integrity_anomaly") or face_result.get("stage", "")
+                if "face_not_visible" in integrity_anomaly or "face_detection" in integrity_anomaly:
+                    actual_event_type = "face_missing"
+                    severity = "high"
+                    face_verification_status = "face_missing"
+                    face_anomaly_reason = "No face visible in camera frame. Please face the camera directly."
+                elif "multiple_faces" in integrity_anomaly:
+                    actual_event_type = "multiple_faces"
+                    severity = "critical"
+                    face_verification_status = "multiple_faces"
+                    face_anomaly_reason = "Multiple faces detected in active interview window."
+                else:
+                    actual_event_type = "continuous_identity_mismatch"
+                    severity = "critical"
+                    face_verification_status = "mismatch"
+                    face_anomaly_reason = f"Identity mismatch detected (similarity: {sim:.2f} below 0.72 threshold)."
+                
                 confidence = float(round(1.0 - sim, 3))
                 meta["face_verified"] = False
+                meta["anomaly_reason"] = face_anomaly_reason
+                # Mark session identity_verified temporarily false if severe mismatch occurs
+                if actual_event_type == "continuous_identity_mismatch":
+                    session.identity_verified = False
             else:
+                actual_event_type = "continuous_face_verified"
+                severity = "low"
+                face_verification_status = "verified"
                 meta["face_verified"] = True
+                session.identity_verified = True
         except Exception as frame_err:
             logger.warning(f"Continuous frame verification failed: {frame_err}")
+            actual_event_type = "verification_service_error"
+            severity = "medium"
+            face_verification_status = "service_error"
+            face_anomaly_reason = f"Verification service error: {str(frame_err)}"
+            meta["error"] = str(frame_err)
 
     # Deduplication: Check if an identical event type was logged in the last 4 seconds to prevent camera noise flooding
     now = datetime.utcnow()
@@ -694,5 +730,11 @@ def log_integrity_event(token: str, event_in: IntegrityEventCreate, db: Session 
         "total_warnings": len(all_events),
         "tab_switches_count": len(tab_switches),
         "terminated": terminated,
-        "termination_reason": termination_reason
+        "termination_reason": termination_reason,
+        "face_verification": {
+            "status": face_verification_status,
+            "similarity_score": face_similarity_score,
+            "anomaly_reason": face_anomaly_reason,
+            "identity_verified": session.identity_verified
+        }
     }

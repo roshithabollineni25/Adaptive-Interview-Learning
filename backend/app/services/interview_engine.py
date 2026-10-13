@@ -120,25 +120,62 @@ class InterviewEngine:
         job = session.job_description
         candidate = session.candidate
 
+        # Collect text of previously asked questions to strictly prevent duplicate questions
+        previous_questions = [q.question_text.strip().lower() for q in session.questions if q.question_text]
+
+        # Determine target question type adaptively across trajectory:
+        # Q1: open_ended, Q2: multiple_choice, Q3: fill_blank, Q4: spoken_only, Q5: multiple_choice / open_ended
+        suggested_type = "open_ended"
+        if order_index == 2:
+            suggested_type = "multiple_choice"
+        elif order_index == 3:
+            suggested_type = "fill_blank"
+        elif order_index == 4:
+            suggested_type = "spoken_only"
+        elif order_index == 5:
+            suggested_type = "multiple_choice"
+        elif order_index == 6:
+            suggested_type = "fill_blank"
+
         system_prompt = (
             "You are an expert technical interviewer conducting an adaptive interview. "
             "Output strictly a JSON object with keys: question, competency_tested, difficulty_level, expected_criteria, question_type, options. "
-            "question_type must be 'open_ended', 'multiple_choice' (include 4 options in 'options'), or 'fill_blank' (question sentence has a blank '_____')."
+            "question_type must be one of: 'open_ended', 'multiple_choice' (include 4 options in 'options'), "
+            "'fill_blank' (question sentence has a single blank '_____'), or 'spoken_only' (a question designed to be heard and answered verbally). "
+            "Never repeat or closely paraphrase a question previously asked."
         )
+
         user_prompt = (
             f"Generate Question #{order_index} for the position '{job.title}'.\n"
+            f"Target Question Type: '{suggested_type}'.\n"
             f"Required competencies: {job.required_competencies}\n"
             f"Candidate background skills: {candidate.extracted_skills}\n"
             f"Target difficulty: {session.current_difficulty}\n"
+            f"Previously asked questions in this session (DO NOT REPEAT): {[q.question_text for q in session.questions]}\n"
         )
 
         llm_res = llm_service.invoke_structured(system_prompt, user_prompt)
-        question_text = llm_res.get("question", f"Explain how you design scalable components in {job.title}.")
-        competency = llm_res.get("competency_tested", "Technical Architecture")
-        difficulty = llm_res.get("difficulty_level", session.current_difficulty)
-        criteria = llm_res.get("expected_criteria", "Depth, accuracy, and clear communication.")
-        q_type = llm_res.get("question_type", "open_ended")
+        question_text = llm_res.get("question", "").strip()
+        q_type = llm_res.get("question_type", suggested_type) or suggested_type
         options = llm_res.get("options", [])
+
+        # Check for duplicate question against previous questions in session
+        if not question_text or question_text.lower() in previous_questions:
+            # Fallback to structured algorithmic generator with guarantee of uniqueness
+            fallback_res = llm_service._fallback_response(
+                "generate question",
+                f"Question #{order_index} position '{job.title}' target difficulty: {session.current_difficulty} type: {suggested_type}"
+            )
+            question_text = fallback_res.get("question", f"Explain how you design scalable components in {job.title} for question #{order_index}.")
+            q_type = fallback_res.get("question_type", suggested_type)
+            options = fallback_res.get("options", [])
+            competency = fallback_res.get("competency_tested", "Technical Architecture")
+            difficulty = fallback_res.get("difficulty_level", session.current_difficulty)
+            criteria = fallback_res.get("expected_criteria", "Depth, accuracy, and clear communication.")
+        else:
+            competency = llm_res.get("competency_tested", "Technical Architecture")
+            difficulty = llm_res.get("difficulty_level", session.current_difficulty)
+            criteria = llm_res.get("expected_criteria", "Depth, accuracy, and clear communication.")
 
         new_q = InterviewQuestion(
             session_id=session.id,

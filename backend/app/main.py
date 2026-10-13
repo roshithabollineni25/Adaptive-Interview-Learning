@@ -45,9 +45,52 @@ async def lifespan(app: FastAPI):
                     if col_name not in existing_q_cols:
                         conn.execute(text(f"ALTER TABLE interview_questions ADD COLUMN {col_name} {col_type};"))
                         conn.commit()
-    except Exception as e:
+    except Exception as mig_err:
         import logging
-        logging.getLogger("uvicorn.error").warning(f"Database column auto-migration warning: {e}")
+        logging.getLogger("uvicorn.error").warning(f"Database auto-migration warning: {mig_err}")
+
+    # Idempotently seed default demo accounts for recruiter and candidate if not already present
+    try:
+        from app.core.database import SessionLocal
+        from app.models.entities import User, UserRole, Candidate
+        from app.core.security import get_password_hash
+        
+        with SessionLocal() as db:
+            # Demo Recruiter
+            demo_rec = db.query(User).filter(User.email == "demo.recruiter@adaptiveinterview.io").first()
+            if not demo_rec:
+                demo_rec = User(
+                    email="demo.recruiter@adaptiveinterview.io",
+                    hashed_password=get_password_hash("DemoRecruiter123!"),
+                    full_name="Lead Technical Recruiter (Demo)",
+                    role=UserRole.RECRUITER
+                )
+                db.add(demo_rec)
+                db.commit()
+
+            # Demo Candidate
+            demo_cand = db.query(User).filter(User.email == "demo.candidate@adaptiveinterview.io").first()
+            if not demo_cand:
+                demo_cand = User(
+                    email="demo.candidate@adaptiveinterview.io",
+                    hashed_password=get_password_hash("DemoCandidate123!"),
+                    full_name="Alex Rivera (Demo Candidate)",
+                    role=UserRole.CANDIDATE
+                )
+                db.add(demo_cand)
+                db.commit()
+                cand_profile = Candidate(
+                    user_id=demo_cand.id,
+                    full_name="Alex Rivera",
+                    email="demo.candidate@adaptiveinterview.io",
+                    target_role="Full Stack Distributed Systems Engineer",
+                    extracted_skills=["Python", "FastAPI", "React", "PostgreSQL", "System Architecture"]
+                )
+                db.add(cand_profile)
+                db.commit()
+    except Exception as seed_err:
+        import logging
+        logging.getLogger("uvicorn.error").warning(f"Demo accounts seeding warning: {seed_err}")
 
     yield
 

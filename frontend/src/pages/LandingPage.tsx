@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
-  ArrowRight, Briefcase, User 
+  ArrowRight, Briefcase, User, X
 } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
   const [candidateToken, setCandidateToken] = useState('');
+  const [showPortalModal, setShowPortalModal] = useState(false);
   const navigate = useNavigate();
 
   const handleCandidateEnter = (e: React.FormEvent) => {
@@ -56,14 +57,15 @@ export const LandingPage: React.FC = () => {
             </div>
           </Link>
 
-          {/* Explicit Portals Access Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Link to="/candidate/login" className="btn btn-secondary" style={{ fontSize: 13, padding: '7px 14px' }}>
-              <User size={14} /> Candidate Portal
-            </Link>
-            <Link to="/login" className="btn btn-primary" style={{ fontSize: 13, padding: '7px 16px' }}>
-              <Briefcase size={14} /> Recruiter Portal
-            </Link>
+          {/* Single Primary Top-Right Button: Enter Interview Portals */}
+          <div>
+            <button 
+              onClick={() => setShowPortalModal(true)} 
+              className="btn btn-primary" 
+              style={{ fontSize: 13, padding: '8px 18px', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              Enter Interview Portals <ArrowRight size={14} />
+            </button>
           </div>
         </div>
       </header>
@@ -94,7 +96,7 @@ export const LandingPage: React.FC = () => {
               marginBottom: 24
             }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--sage-accent)' }}></span>
-              Recruitment Intelligence Engine
+              Adaptive Recruitment & Evaluation Platform
             </div>
 
             <h1 style={{ 
@@ -116,17 +118,18 @@ export const LandingPage: React.FC = () => {
               marginBottom: 36,
               maxWidth: 580
             }}>
-              Conduct role-specific interviews, evaluate candidate responses with supporting evidence, 
-              identify skill gaps, and keep final hiring decisions in human hands.
+              Conduct role-specific technical assessments with multi-factor biometric identity protection,
+              evidence-backed response scoring, and verifiable human hiring authority.
             </p>
 
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 40 }}>
-              <Link to="/login" className="btn btn-primary" style={{ padding: '12px 24px', fontSize: 15 }}>
-                Recruiter Sign In
-              </Link>
-              <a href="#two-portals" className="btn btn-secondary" style={{ padding: '12px 24px', fontSize: 15 }}>
-                Enter Interview Portals
-              </a>
+              <button 
+                onClick={() => setShowPortalModal(true)} 
+                className="btn btn-primary" 
+                style={{ padding: '12px 26px', fontSize: 15, display: 'inline-flex', alignItems: 'center', gap: 8 }}
+              >
+                Enter Interview Portals <ArrowRight size={16} />
+              </button>
             </div>
 
             <div style={{ display: 'flex', gap: 24, borderTop: '1px solid var(--border-light)', paddingTop: 24 }}>
@@ -336,6 +339,119 @@ export const LandingPage: React.FC = () => {
           </div>
         </div>
       </footer>
+
+      {/* Portal Selection Modal */}
+      {showPortalModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.55)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100,
+          padding: 20
+        }}>
+          <div className="card" style={{ maxWidth: 600, width: '100%', padding: 32, position: 'relative' }}>
+            <button
+              onClick={() => setShowPortalModal(false)}
+              style={{
+                position: 'absolute',
+                top: 18,
+                right: 18,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--text-muted)'
+              }}
+            >
+              <X size={20} />
+            </button>
+
+            <h3 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)' }}>
+              Select Your Portal
+            </h3>
+            <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 24 }}>
+              Choose your role to access applicant workflows or recruiting workspace.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {/* Candidate Option */}
+              <div 
+                onClick={() => navigate('/candidate/login')}
+                style={{
+                  padding: 20,
+                  border: '1px solid var(--border-light)',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  backgroundColor: 'var(--bg-subtle)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <div style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 8,
+                  backgroundColor: 'var(--sage-subtle)',
+                  color: 'var(--sage-accent)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 12
+                }}>
+                  <User size={20} />
+                </div>
+                <h4 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Candidate Portal</h4>
+                <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 16 }}>
+                  Register, apply for roles, upload resume, enroll biometric reference, and access interviews.
+                </p>
+                <span className="btn btn-secondary" style={{ width: '100%', fontSize: 12, padding: '6px 12px', textAlign: 'center' }}>
+                  Candidate Sign In / Register
+                </span>
+              </div>
+
+              {/* Recruiter Option */}
+              <div 
+                onClick={() => navigate('/login')}
+                style={{
+                  padding: 20,
+                  border: '1px solid var(--sage-border)',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  backgroundColor: '#ffffff',
+                  boxShadow: 'var(--shadow-sm)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <div style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 8,
+                  backgroundColor: 'var(--sage-accent)',
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 12
+                }}>
+                  <Briefcase size={20} />
+                </div>
+                <h4 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Recruiter Portal</h4>
+                <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 16 }}>
+                  Post roles, schedule interviews, review proctor telemetry, inspect evidence, and decide outcomes.
+                </p>
+                <span className="btn btn-primary" style={{ width: '100%', fontSize: 12, padding: '6px 12px', textAlign: 'center' }}>
+                  Recruiter Sign In
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

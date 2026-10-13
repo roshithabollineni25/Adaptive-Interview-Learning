@@ -123,7 +123,39 @@ export const AuthPage: React.FC = () => {
           </button>
         </form>
 
-        <div style={{ marginTop: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>
+        {/* Clearly Labeled Demo Recruiter Login */}
+        <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border-light)', textAlign: 'center' }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+            Evaluating as a reviewer or evaluator?
+          </p>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={async () => {
+              setError(null);
+              setLoading(true);
+              try {
+                const res = await apiClient.login({
+                  email: 'demo.recruiter@adaptiveinterview.io',
+                  password: 'DemoRecruiter123!'
+                });
+                localStorage.setItem('token', res.access_token);
+                localStorage.setItem('user', JSON.stringify(res.user));
+                navigate('/recruiter');
+              } catch (err: any) {
+                setError(err?.response?.data?.detail || 'Demo login failed');
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="btn btn-secondary"
+            style={{ width: '100%', fontSize: 13, padding: '9px 14px' }}
+          >
+            Demo Recruiter One-Click Sign In
+          </button>
+        </div>
+
+        <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>
           {isRegister ? 'Already registered as recruiter?' : "Need recruiter credentials?"}{' '}
           <button
             onClick={() => { setIsRegister(!isRegister); setError(null); }}

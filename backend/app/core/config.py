@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     # Transactional Email — Brevo HTTPS API
     BREVO_API_KEY: str = ""
     BREVO_FROM_EMAIL: str = ""
-    # Interview engine bounds
-    MAX_QUESTIONS_PER_SESSION: int = 5
+    # Interview engine bounds (configurable per session requirement; minimum 6 questions to assess depth)
+    MAX_QUESTIONS_PER_SESSION: int = 6
     MAX_RECOVERY_ATTEMPTS: int = 2
 
     # Time window configuration: early access tolerance (minutes before schedule) and duration window (minutes after schedule)

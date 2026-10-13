@@ -50,6 +50,8 @@ export const CandidateInterviewExperience: React.FC = () => {
 
   // Fullscreen and Continuous Webcam Proctoring
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [identityBlocked, setIdentityBlocked] = useState(false);
+  const [continuousMonitoringActive, setContinuousMonitoringActive] = useState(false);
   const continuousProctorIntervalRef = useRef<any | null>(null);
 
   const loadInterview = async () => {
@@ -188,20 +190,45 @@ export const CandidateInterviewExperience: React.FC = () => {
     };
   }, [interview?.identity_verified, interview?.time_window_check?.allowed, interview?.status]);
 
-  // Capture ID Card frame from camera
+  // Capture or Recapture ID Card frame from camera
   const handleCaptureIdCard = () => {
-    if (!videoRef.current || !canvasRef.current) return;
+    setVerificationError(null);
+    setVerificationSuccess(null);
+    setVerificationDetails(null);
+
+    if (!videoRef.current || !canvasRef.current) {
+      setVerificationError('Webcam preview not ready. Please verify camera permissions.');
+      return;
+    }
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (video.videoWidth === 0) return;
+    if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      setVerificationError('Webcam stream is still loading. Please hold your ID card to the camera and try again in a moment.');
+      return;
+    }
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const b64 = canvas.toDataURL('image/jpeg', 0.90);
-      setIdCardCaptured(b64);
+    if (!ctx) {
+      setVerificationError('Failed to capture canvas frame from webcam.');
+      return;
     }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const b64 = canvas.toDataURL('image/jpeg', 0.90);
+    if (!b64 || b64.length < 100) {
+      setVerificationError('Captured ID frame was empty. Please check camera visibility.');
+      return;
+    }
+    // Set newly captured ID and invalidate any prior verification state
+    setIdCardCaptured(b64);
+  };
+
+  const handleRecaptureIdCard = () => {
+    // Invalidate previous verification result and trigger fresh capture from live stream
+    setVerificationSuccess(null);
+    setVerificationDetails(null);
+    setVerificationError(null);
+    handleCaptureIdCard();
   };
 
   // Run Real Biometric Identity Verification Gate
@@ -286,6 +313,7 @@ export const CandidateInterviewExperience: React.FC = () => {
 
     // Continuous 12s facial frame check
     continuousProctorIntervalRef.current = setInterval(async () => {
+      setContinuousMonitoringActive(true);
       if (videoRef.current && canvasRef.current && videoRef.current.readyState >= 2) {
         const video = videoRef.current;
         const canvas = canvasRef.current;
@@ -307,11 +335,25 @@ export const CandidateInterviewExperience: React.FC = () => {
             if (res.terminated) {
               setTerminatedNotice(res.termination_reason || 'Session terminated due to facial verification mismatch.');
               loadInterview();
+              return;
+            }
+
+            const faceStatus = res.face_verification?.status;
+            if (faceStatus === 'face_missing' || faceStatus === 'mismatch' || faceStatus === 'multiple_faces') {
+              setIdentityBlocked(true);
+              setIntegrityWarning(res.face_verification?.anomaly_reason || 'Face verification anomaly detected. Please position your face clearly in front of the camera.');
+            } else if (faceStatus === 'verified') {
+              setIdentityBlocked(false);
+              setIntegrityWarning(null);
             }
           } catch (e) {
             console.warn('Continuous face check cycle error:', e);
           }
         }
+      } else {
+        // Camera unavailable or stream dropped
+        setIdentityBlocked(true);
+        setIntegrityWarning('Webcam feed unavailable. Please ensure your camera is enabled and active.');
       }
     }, 12000);
 
@@ -369,6 +411,11 @@ export const CandidateInterviewExperience: React.FC = () => {
   const handleSubmitAnswer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) return;
+
+    if (identityBlocked) {
+      alert('Answer submission is blocked while facial identity check is unresolved. Please ensure your face is fully visible in front of the camera.');
+      return;
+    }
 
     const qType = interview?.active_question?.question_type || 'open_ended';
     let finalAnswer = '';
@@ -572,24 +619,38 @@ export const CandidateInterviewExperience: React.FC = () => {
             </div>
 
             {/* Mandatory ID Card Presentation step */}
-            <div style={{ marginBottom: 18, padding: 12, border: '1px solid var(--border-light)', borderRadius: 8, backgroundColor: 'var(--bg-subtle)' }}>
+            <div style={{ marginBottom: 18, padding: 14, border: '1px solid var(--border-light)', borderRadius: 8, backgroundColor: 'var(--bg-subtle)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <IdCard size={16} color="var(--sage-accent)" /> Government / Student Photo ID Card (Mandatory)
                 </span>
                 <button 
                   type="button" 
-                  onClick={handleCaptureIdCard} 
+                  onClick={idCardCaptured ? handleRecaptureIdCard : handleCaptureIdCard} 
                   className="btn btn-secondary" 
-                  style={{ padding: '4px 10px', fontSize: 12 }}
+                  style={{ padding: '5px 12px', fontSize: 12 }}
                 >
                   {idCardCaptured ? 'Recapture ID Card' : 'Hold ID to Camera & Capture'}
                 </button>
               </div>
+              
+              {idCardCaptured && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, marginBottom: 8, padding: 8, borderRadius: 6, backgroundColor: '#ffffff', border: '1px solid var(--border-light)' }}>
+                  <img 
+                    src={idCardCaptured} 
+                    alt="Captured ID" 
+                    style={{ width: 70, height: 45, objectFit: 'cover', borderRadius: 4, border: '1px solid #ccc' }} 
+                  />
+                  <span style={{ fontSize: 12, color: 'var(--success)', fontWeight: 600 }}>
+                    ✓ ID card snapshot ready for verification.
+                  </span>
+                </div>
+              )}
+
               <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
                 {idCardCaptured 
-                  ? '✓ ID card snapshot captured successfully.' 
-                  : 'Hold your official photo ID card to the webcam and click capture. Required before verification.'}
+                  ? 'Click "Recapture ID Card" if the image was blurry or obstructed. Newly captured image must be verified.' 
+                  : 'Hold your official photo ID card clearly to the webcam and click capture. Required before verification.'}
               </p>
             </div>
 
@@ -668,32 +729,67 @@ export const CandidateInterviewExperience: React.FC = () => {
           <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Candidate: {interview.candidate_name}</p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Live Proctoring Webcam PiP Preview to ensure persistent video capture */}
           <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 6, 
-            fontSize: 12, 
-            color: isFullscreen ? 'var(--sage-accent)' : 'var(--warning)', 
-            backgroundColor: 'var(--sage-subtle)', 
-            padding: '6px 14px', 
-            borderRadius: 9999,
-            border: '1px solid var(--sage-border)'
+            position: 'relative', 
+            width: 120, 
+            height: 70, 
+            backgroundColor: '#000', 
+            borderRadius: 6, 
+            overflow: 'hidden',
+            border: identityBlocked ? '2px solid var(--danger)' : '1px solid var(--sage-border)',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.1)'
           }}>
-            <Shield size={14} /> {isFullscreen ? 'Fullscreen Locked' : 'Fullscreen Inactive'}
+            <video 
+              ref={videoRef} 
+              autoPlay 
+              playsInline 
+              muted 
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+            />
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+            <div style={{
+              position: 'absolute',
+              bottom: 2,
+              left: 4,
+              fontSize: 9,
+              color: '#ffffff',
+              backgroundColor: 'rgba(0,0,0,0.6)',
+              padding: '1px 4px',
+              borderRadius: 3
+            }}>
+              {identityBlocked ? 'Alert' : 'Proctored'}
+            </div>
           </div>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 6, 
-            fontSize: 12, 
-            color: 'var(--sage-accent)', 
-            backgroundColor: 'var(--sage-subtle)', 
-            padding: '6px 14px', 
-            borderRadius: 9999,
-            border: '1px solid var(--sage-border)'
-          }}>
-            <Shield size={14} /> Identity Verified & Monitored
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6, 
+              fontSize: 11, 
+              color: isFullscreen ? 'var(--sage-accent)' : 'var(--warning)', 
+              backgroundColor: 'var(--sage-subtle)', 
+              padding: '4px 10px', 
+              borderRadius: 9999,
+              border: '1px solid var(--sage-border)'
+            }}>
+              <Shield size={12} /> {isFullscreen ? 'Fullscreen Locked' : 'Fullscreen Inactive'}
+            </div>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6, 
+              fontSize: 11, 
+              color: identityBlocked ? 'var(--danger)' : 'var(--sage-accent)', 
+              backgroundColor: identityBlocked ? '#ffebee' : 'var(--sage-subtle)', 
+              padding: '4px 10px', 
+              borderRadius: 9999,
+              border: identityBlocked ? '1px solid #ffcdd2' : '1px solid var(--sage-border)'
+            }}>
+              <Shield size={12} /> {identityBlocked ? 'Identity Check Blocked' : (continuousMonitoringActive ? 'Monitoring Active' : 'Initializing Proctor...')}
+            </div>
           </div>
         </div>
       </div>
@@ -741,9 +837,47 @@ export const CandidateInterviewExperience: React.FC = () => {
             </div>
           </div>
 
-          <h2 style={{ fontSize: 19, fontWeight: 600, lineHeight: 1.5, marginBottom: 20, color: 'var(--text-primary)' }}>
-            {interview.active_question.question_text}
-          </h2>
+          {/* Question Text Display or Spoken-Only Prompt Notice */}
+          {interview.active_question.question_type === 'spoken_only' ? (
+            <div style={{
+              padding: 20,
+              backgroundColor: 'var(--sage-subtle)',
+              border: '1px solid var(--sage-border)',
+              borderRadius: 8,
+              marginBottom: 20,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14
+            }}>
+              <div style={{
+                width: 44,
+                height: 44,
+                borderRadius: '50%',
+                backgroundColor: isSpeakingQuestion ? '#e8f5e9' : '#ffffff',
+                color: 'var(--sage-accent)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '1px solid var(--sage-border)'
+              }}>
+                <Volume2 size={24} />
+              </div>
+              <div>
+                <strong style={{ fontSize: 15, color: 'var(--text-primary)', display: 'block', marginBottom: 2 }}>
+                  Spoken Technical Prompt (Listening Exercise)
+                </strong>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                  {isSpeakingQuestion 
+                    ? 'The AI interviewer is speaking the question aloud. Listen attentively.' 
+                    : 'Question text is hidden to test your real-time auditory comprehension. Click "Speak Question" if you need it repeated.'}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <h2 style={{ fontSize: 19, fontWeight: 600, lineHeight: 1.5, marginBottom: 20, color: 'var(--text-primary)' }}>
+              {interview.active_question.question_text}
+            </h2>
+          )}
 
           <form onSubmit={handleSubmitAnswer} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {/* 1. Multiple Choice Question Rendering */}
@@ -825,8 +959,10 @@ export const CandidateInterviewExperience: React.FC = () => {
               </div>
             )}
 
-            {/* 3. Open Ended (Typed vs Voice Mode) Rendering */}
-            {(!interview.active_question.question_type || interview.active_question.question_type === 'open_ended') && (
+            {/* 3. Open Ended / Spoken Only (Typed vs Voice Mode) Rendering */}
+            {(!interview.active_question.question_type || 
+              interview.active_question.question_type === 'open_ended' || 
+              interview.active_question.question_type === 'spoken_only') && (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <div style={{ display: 'flex', gap: 6 }}>
@@ -944,15 +1080,18 @@ export const CandidateInterviewExperience: React.FC = () => {
                 type="submit" 
                 disabled={
                   submitting || 
+                  identityBlocked ||
                   (interview.active_question.question_type === 'multiple_choice' && !selectedOption) ||
                   (interview.active_question.question_type === 'fill_blank' && !fillBlankAnswer.trim()) ||
-                  ((!interview.active_question.question_type || interview.active_question.question_type === 'open_ended') && 
+                  ((!interview.active_question.question_type || 
+                    interview.active_question.question_type === 'open_ended' || 
+                    interview.active_question.question_type === 'spoken_only') && 
                     ((answerMode === 'typed' && !answer.trim()) || (answerMode === 'voice' && !voiceRecordedText.trim() && !answer.trim())))
                 } 
                 className="btn btn-primary"
-                style={{ padding: '10px 22px' }}
+                style={{ padding: '10px 22px', opacity: identityBlocked ? 0.6 : 1 }}
               >
-                <Send size={16} /> {submitting ? 'Submitting & Evaluating...' : 'Submit Answer & Proceed'}
+                <Send size={16} /> {submitting ? 'Submitting & Evaluating...' : (identityBlocked ? 'Identity Blocked' : 'Submit Answer & Proceed')}
               </button>
             </div>
           </form>

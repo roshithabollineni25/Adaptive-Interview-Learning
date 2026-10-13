@@ -14,7 +14,7 @@ class QuestionOutputSchema(BaseModel):
     competency_tested: str = Field(min_length=2)
     difficulty_level: str = Field(default="Medium")
     expected_criteria: str = Field(default="Technical accuracy, architecture trade-offs, and communication clarity.")
-    question_type: str = Field(default="open_ended")  # open_ended, multiple_choice, fill_blank
+    question_type: str = Field(default="open_ended")  # open_ended, multiple_choice, fill_blank, spoken_only
     options: Optional[List[str]] = Field(default_factory=list)
 
 class AnswerEvaluationSchema(BaseModel):
@@ -372,7 +372,16 @@ class LLMService:
                     "question_type": "fill_blank",
                     "options": []
                 }
-            elif order_idx == 4:
+            elif order_idx == 4 or "spoken" in lower:
+                return {
+                    "question": f"Listen carefully and respond verbally: In a production outage where 99th percentile latency suddenly spikes due to database lock contention, what diagnostic telemetry would you inspect first, and how would you resolve the blocking locks?",
+                    "competency_tested": "Production Incident Debugging",
+                    "difficulty_level": difficulty,
+                    "expected_criteria": "Candidate identifies active lock queries, transaction deadlocks, connection pool saturation, and kill/rollback strategies.",
+                    "question_type": "spoken_only",
+                    "options": []
+                }
+            elif order_idx == 5:
                 return {
                     "question": f"Which isolation level in relational databases guarantees protection against dirty reads, non-repeatable reads, and phantom reads?",
                     "competency_tested": "Database Architecture",
@@ -385,6 +394,15 @@ class LLMService:
                         "C) Read Committed",
                         "D) Read Uncommitted"
                     ]
+                }
+            elif order_idx == 6:
+                return {
+                    "question": "To avoid race conditions under high concurrent writes in an event-driven system without distributed locks, developers frequently use _____ concurrency control with version tags.",
+                    "competency_tested": "Concurrency & State Control",
+                    "difficulty_level": difficulty,
+                    "expected_criteria": "optimistic",
+                    "question_type": "fill_blank",
+                    "options": []
                 }
             else:
                 return {
