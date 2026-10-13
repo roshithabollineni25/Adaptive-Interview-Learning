@@ -111,9 +111,13 @@ class InterviewSession(Base):
     # Final hiring decision and evaluation
     final_score = Column(Float, nullable=True)
     final_recommendation = Column(String(100), nullable=True)  # Strong Hire, Hire, Lean No, No Hire
-    recruiter_decision = Column(String(100), nullable=True)    # Hired, Rejected, Under Review
-    recruiter_notes = Column(Text, nullable=True)
-    
+    recruiter_decision = Column(String(100), nullable=True)    # Selected (Hired), Rejected, Under Review (Pending), On Hold
+    recruiter_notes = Column(Text, nullable=True)             # Confidential internal recruiter notes
+    candidate_feedback = Column(Text, nullable=True)          # Optional approved candidate-facing feedback
+    decision_at = Column(DateTime, nullable=True)             # Timestamp when recruiter recorded decision
+    decision_notification_status = Column(String(50), nullable=True) # accepted, delivered, delivery_failed, configuration_required
+    decision_notification_error = Column(Text, nullable=True)        # Safe diagnostic details of notification outcome
+
     # Reports
     skill_gap_analysis = Column(JSON, nullable=True)
     evidence_report = Column(JSON, nullable=True)

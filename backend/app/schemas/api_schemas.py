@@ -79,6 +79,7 @@ class RescheduleInterviewRequest(BaseModel):
 # Identity Verification Probe
 class IdentityVerificationProbe(BaseModel):
     probe_frame_base64: str
+    id_card_frame_base64: Optional[str] = None
 
 # Interview Session schemas
 class QuestionAnswerSubmit(BaseModel):
@@ -91,8 +92,9 @@ class IntegrityEventCreate(BaseModel):
     metadata_info: Optional[Dict[str, Any]] = None
 
 class RecruiterDecisionUpdate(BaseModel):
-    recruiter_decision: str  # Hired, Rejected, Under Review
+    recruiter_decision: str  # Selected, Rejected, Under Review, On Hold, Hired
     recruiter_notes: Optional[str] = None
+    candidate_feedback: Optional[str] = None
 
 # Health check schema
 class HealthCheckResponse(BaseModel):

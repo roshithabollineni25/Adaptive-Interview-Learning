@@ -1,6 +1,6 @@
 import uuid
 from typing import Dict, Any, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 
@@ -25,6 +25,10 @@ class InterviewEngine:
         job = db.query(JobDescription).filter(JobDescription.id == job_description_id).first()
         if not candidate or not job:
             raise HTTPException(status_code=404, detail="Candidate or Job Description record not found")
+
+        # If timezone-aware datetime is passed, convert to UTC naive
+        if scheduled_start.tzinfo is not None:
+            scheduled_start = scheduled_start.astimezone(timezone.utc).replace(tzinfo=None)
 
         session_token = str(uuid.uuid4())
         scheduled_end = scheduled_start + timedelta(minutes=settings.INTERVIEW_WINDOW_MINUTES)

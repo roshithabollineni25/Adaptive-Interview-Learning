@@ -10,10 +10,33 @@ from app.api.recruitment import router as recruitment_router, interview_router
 from app.api.candidate_portal import router as candidate_portal_router
 from app.api.system import router as system_router
 
+from sqlalchemy import inspect, text
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure tables exist in database (PostgreSQL or SQLite) on startup
     Base.metadata.create_all(bind=engine)
+    
+    # Auto-migrate any newly introduced columns to existing database tables safely
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            if "interview_sessions" in inspector.get_table_names():
+                existing_cols = {c["name"] for c in inspector.get_columns("interview_sessions")}
+                new_columns = [
+                    ("candidate_feedback", "TEXT"),
+                    ("decision_at", "TIMESTAMP"),
+                    ("decision_notification_status", "VARCHAR(50)"),
+                    ("decision_notification_error", "TEXT"),
+                ]
+                for col_name, col_type in new_columns:
+                    if col_name not in existing_cols:
+                        conn.execute(text(f"ALTER TABLE interview_sessions ADD COLUMN {col_name} {col_type};"))
+                        conn.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").warning(f"Database column auto-migration warning: {e}")
+
     yield
 
 app = FastAPI(

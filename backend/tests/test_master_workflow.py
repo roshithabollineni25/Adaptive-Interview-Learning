@@ -256,3 +256,202 @@ def _run_full_recruiter_and_candidate_workflow():
     # 17. Deleted session is gone from queue
     get_deleted = client.get(f"/api/recruitment/sessions/{sess2_id}", headers=recruiter_headers)
     assert get_deleted.status_code == 404
+
+def test_cors_headers_and_preflight():
+    """Verify CORS preflight and production origin allow headers on authenticated and error responses."""
+    origin = "https://adaptive-interview-frontend-b2ol.onrender.com"
+    
+    # 1. Preflight OPTIONS request
+    opt_res = client.options("/api/candidate-portal/interviews", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "Authorization"
+    })
+    assert opt_res.status_code == 200
+    assert opt_res.headers.get("access-control-allow-origin") == origin
+    assert opt_res.headers.get("access-control-allow-credentials") == "true"
+
+    # 2. Unauthenticated GET returns 401 with CORS headers preserved
+    unauth_res = client.get("/api/candidate-portal/interviews", headers={"Origin": origin})
+    assert unauth_res.status_code == 401
+    assert unauth_res.headers.get("access-control-allow-origin") == origin
+
+    # 3. 404 Not Found returns CORS headers preserved
+    not_found_res = client.get("/api/interview/non-existent-token-12345", headers={"Origin": origin})
+    assert not_found_res.status_code == 404
+    assert not_found_res.headers.get("access-control-allow-origin") == origin
+
+def test_candidate_routes_registration_and_auth():
+    """Verify all candidate portal routes exist and enforce candidate role."""
+    # Register a candidate
+    email = f"route.cand.{datetime.datetime.utcnow().timestamp()}@adaptive.io"
+    reg = client.post("/api/auth/register", json={
+        "email": email,
+        "password": "Password123!",
+        "full_name": "Portal Route Candidate",
+        "role": "candidate"
+    })
+    assert reg.status_code == 200
+    token = reg.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # GET /api/candidate-portal/profile
+    prof = client.get("/api/candidate-portal/profile", headers=headers)
+    assert prof.status_code == 200
+    assert prof.json()["email"] == email
+
+    # GET /api/candidate-portal/interviews
+    ints = client.get("/api/candidate-portal/interviews", headers=headers)
+    assert ints.status_code == 200
+    assert isinstance(ints.json(), list)
+
+    # Invalid interview token deep link returns 404
+    bad_token = client.get("/api/interview/invalid-token-xyz")
+    assert bad_token.status_code == 404
+    assert "not found" in bad_token.json()["detail"].lower()
+
+def test_session_detail_robustness():
+    """Verify get_session_detail handles scheduled/unevaluated sessions and missing references safely."""
+    # Register recruiter
+    rec_email = f"rec.detail.{datetime.datetime.utcnow().timestamp()}@adaptive.io"
+    reg_rec = client.post("/api/auth/register", json={
+        "email": rec_email,
+        "password": "Password123!",
+        "full_name": "Detail Test Recruiter",
+        "role": "recruiter"
+    })
+    rec_headers = {"Authorization": f"Bearer {reg_rec.json()['access_token']}"}
+
+    # Register candidate & job
+    job = client.post("/api/recruitment/jobs", json={
+        "title": "Backend SRE",
+        "department": "Infrastructure",
+        "raw_text": "Python and Linux",
+        "experience_level": "Mid"
+    }, headers=rec_headers).json()
+
+    cand_res = client.post("/api/auth/register", json={
+        "email": f"cand.detail.{datetime.datetime.utcnow().timestamp()}@gmail.com",
+        "password": "Password123!",
+        "full_name": "Scheduled Only Candidate",
+        "role": "candidate"
+    })
+    assert cand_res.status_code == 200
+    cand_data = cand_res.json()
+    cand_token = cand_data["access_token"]
+    cand_headers = {"Authorization": f"Bearer {cand_token}"}
+
+    # Candidate submits application to have a candidate profile record
+    app_res = client.post(
+        "/api/candidate-portal/application",
+        data={"target_role": "Backend SRE"},
+        files={"file": ("resume.txt", b"SRE resume content with kubernetes and python", "text/plain")},
+        headers=cand_headers
+    )
+    assert app_res.status_code == 200
+    cand_id = app_res.json()["candidate"]["id"]
+
+    # Schedule session (no questions completed yet, report is null)
+    sched_res = client.post("/api/recruitment/sessions/schedule", json={
+        "candidate_id": cand_id,
+        "job_description_id": job["id"],
+        "scheduled_start": datetime.datetime.utcnow().isoformat()
+    }, headers=rec_headers)
+    assert sched_res.status_code == 200
+    sched = sched_res.json()
+    sess_id = sched["session_id"]
+
+    # Recruiter calls GET /api/recruitment/sessions/{sess_id}
+    detail_res = client.get(f"/api/recruitment/sessions/{sess_id}", headers=rec_headers)
+    assert detail_res.status_code == 200
+    data = detail_res.json()
+    assert data["id"] == sess_id
+    assert data["candidate"]["full_name"] is not None
+    assert data["job"]["title"] == "Backend SRE"
+    assert data["final_score"] is None
+    assert data["skill_gap_analysis"] is None
+    assert isinstance(data["questions"], list)
+    assert len(data["questions"]) == 0
+
+    # Non-existent session returns 404
+    not_found = client.get("/api/recruitment/sessions/999999", headers=rec_headers)
+    assert not_found.status_code == 404
+
+def test_reschedule_interview_ist():
+    """Verify that interview rescheduling correctly handles IST timestamps and rejects past times."""
+    ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+    # 1. Register Recruiter
+    rec_email = f"rec.ist.{datetime.datetime.utcnow().timestamp()}@adaptive.io"
+    rec_reg = client.post("/api/auth/register", json={
+        "email": rec_email,
+        "password": "RecruiterPass123!",
+        "full_name": "IST Recruiter",
+        "role": "recruiter"
+    })
+    rec_token = rec_reg.json()["access_token"]
+    rec_headers = {"Authorization": f"Bearer {rec_token}"}
+
+    # 2. Create Job
+    job = client.post("/api/recruitment/jobs", json={
+        "title": "Platform Lead",
+        "department": "Infrastructure",
+        "raw_text": "Lead platform reliability engineering with Docker, Kubernetes, and FastAPI.",
+        "required_competencies": ["Kubernetes", "FastAPI"],
+        "experience_level": "Senior"
+    }, headers=rec_headers).json()
+
+    # 3. Register Candidate & Submit App
+    cand_reg = client.post("/api/auth/register", json={
+        "email": f"cand.ist.{datetime.datetime.utcnow().timestamp()}@gmail.com",
+        "password": "Password123!",
+        "full_name": "Arjun Patel",
+        "role": "candidate"
+    }).json()
+    cand_token = cand_reg["access_token"]
+    cand_headers = {"Authorization": f"Bearer {cand_token}"}
+
+    app_res = client.post(
+        "/api/candidate-portal/application",
+        data={"target_role": "Platform Lead"},
+        files={"file": ("resume.txt", b"Platform Lead resume with Kubernetes and FastAPI experience", "text/plain")},
+        headers=cand_headers
+    )
+    cand_id = app_res.json()["candidate"]["id"]
+
+    # 4. Schedule Initial Session
+    initial_start = (datetime.datetime.utcnow() + datetime.timedelta(hours=4)).isoformat()
+    sched = client.post("/api/recruitment/sessions/schedule", json={
+        "candidate_id": cand_id,
+        "job_description_id": job["id"],
+        "scheduled_start": initial_start
+    }, headers=rec_headers).json()
+    sess_id = sched["session_id"]
+
+    # 5. Reschedule to a future time in IST (e.g. 3 hours in future with +05:30 offset)
+    future_ist = (datetime.datetime.now(ist_tz) + datetime.timedelta(hours=3)).replace(second=0, microsecond=0)
+    future_ist_str = future_ist.strftime("%Y-%m-%dT%H:%M:00+05:30")
+
+    resched_res = client.patch(f"/api/recruitment/sessions/{sess_id}/reschedule", json={
+        "new_scheduled_start": future_ist_str
+    }, headers=rec_headers)
+    assert resched_res.status_code == 200
+    resched_data = resched_res.json()
+    assert resched_data["status"] == "scheduled"
+    # Verify the stored start time matches the expected UTC time
+    expected_utc = future_ist.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    parsed_stored = datetime.datetime.fromisoformat(resched_data["scheduled_start"])
+    assert parsed_stored == expected_utc
+
+    # 6. Attempt to reschedule to a past time in IST (e.g. 2 hours ago with +05:30 offset)
+    past_ist = datetime.datetime.now(ist_tz) - datetime.timedelta(hours=2)
+    past_ist_str = past_ist.strftime("%Y-%m-%dT%H:%M:00+05:30")
+
+    past_resched_res = client.patch(f"/api/recruitment/sessions/{sess_id}/reschedule", json={
+        "new_scheduled_start": past_ist_str
+    }, headers=rec_headers)
+    assert past_resched_res.status_code == 400
+    assert "cannot be in the past" in past_resched_res.json()["detail"].lower()
+
+
+
