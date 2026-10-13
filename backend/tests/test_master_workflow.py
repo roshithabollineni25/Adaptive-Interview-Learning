@@ -453,5 +453,139 @@ def test_reschedule_interview_ist():
     assert past_resched_res.status_code == 400
     assert "cannot be in the past" in past_resched_res.json()["detail"].lower()
 
+def test_recruiter_decision_persistence_and_candidate_portal():
+    """Verify that all 4 recruiter decisions save cleanly and reflect on the candidate portal."""
+    with patch.object(llm_service, "invoke_structured", side_effect=mock_invoke_structured):
+        rec_email = f"rec.dec.{datetime.datetime.utcnow().timestamp()}@adaptive.io"
+        rec_reg = client.post("/api/auth/register", json={
+            "email": rec_email,
+            "password": "Password123!",
+            "full_name": "Decisions Lead",
+            "role": "recruiter"
+        }).json()
+        rec_headers = {"Authorization": f"Bearer {rec_reg['access_token']}"}
+
+        job = client.post("/api/recruitment/jobs", json={
+            "title": "Full Stack Lead",
+            "department": "Engineering",
+            "raw_text": "Python and React",
+            "experience_level": "Senior"
+        }, headers=rec_headers).json()
+
+        cand_email = f"cand.dec.{datetime.datetime.utcnow().timestamp()}@gmail.com"
+        cand_reg = client.post("/api/auth/register", json={
+            "email": cand_email,
+            "password": "Password123!",
+            "full_name": "Candidate Decision Test",
+            "role": "candidate"
+        }).json()
+        cand_headers = {"Authorization": f"Bearer {cand_reg['access_token']}"}
+
+        app_res = client.post(
+            "/api/candidate-portal/application",
+            data={"target_role": "Full Stack Lead"},
+            files={"file": ("resume.txt", b"Full stack lead resume", "text/plain")},
+            headers=cand_headers
+        )
+        cand_id = app_res.json()["candidate"]["id"]
+
+        sched_res = client.post("/api/recruitment/sessions/schedule", json={
+            "candidate_id": cand_id,
+            "job_description_id": job["id"],
+            "scheduled_start": datetime.datetime.utcnow().isoformat()
+        }, headers=rec_headers)
+        assert sched_res.status_code == 200
+        sched = sched_res.json()
+        sess_id = sched["session_id"]
+
+        for test_dec in ["Selected", "On Hold", "Under Review", "Rejected"]:
+            patch_res = client.patch(f"/api/recruitment/sessions/{sess_id}/decision", json={
+                "recruiter_decision": test_dec,
+                "recruiter_notes": f"Internal confidential note for {test_dec}",
+                "candidate_feedback": f"Feedback for candidate: {test_dec}"
+            }, headers=rec_headers)
+            assert patch_res.status_code == 200
+            patch_data = patch_res.json()
+            assert patch_data["decision"] == test_dec
+            assert patch_data["candidate_feedback"] == f"Feedback for candidate: {test_dec}"
+
+            # Verify Candidate Portal lists the decision
+            cand_ints = client.get("/api/candidate-portal/interviews", headers=cand_headers).json()
+            match_int = next((i for i in cand_ints if i["id"] == sess_id), None)
+            assert match_int is not None
+            assert match_int["decision_status"] == test_dec
+            assert match_int["candidate_feedback"] == f"Feedback for candidate: {test_dec}"
+
+def test_integrity_strike_termination():
+    """Verify that 3 tab switches terminate session cleanly and record reason."""
+    with patch.object(llm_service, "invoke_structured", side_effect=mock_invoke_structured):
+        rec_email = f"rec.int.{datetime.datetime.utcnow().timestamp()}@adaptive.io"
+        rec_reg = client.post("/api/auth/register", json={
+            "email": rec_email,
+            "password": "Password123!",
+            "full_name": "Integrity Lead",
+            "role": "recruiter"
+        }).json()
+        rec_headers = {"Authorization": f"Bearer {rec_reg['access_token']}"}
+
+        job = client.post("/api/recruitment/jobs", json={
+            "title": "Security Analyst",
+            "raw_text": "Security",
+            "experience_level": "Mid"
+        }, headers=rec_headers).json()
+
+        cand_reg = client.post("/api/auth/register", json={
+            "email": f"cand.int.{datetime.datetime.utcnow().timestamp()}@gmail.com",
+            "password": "Password123!",
+            "full_name": "Proctor Candidate",
+            "role": "candidate"
+        }).json()
+        cand_headers = {"Authorization": f"Bearer {cand_reg['access_token']}"}
+
+        app_res = client.post(
+            "/api/candidate-portal/application",
+            data={"target_role": "Security Analyst"},
+            files={"file": ("resume.txt", b"Security resume", "text/plain")},
+            headers=cand_headers
+        )
+        cand_id = app_res.json()["candidate"]["id"]
+
+        sched_res = client.post("/api/recruitment/sessions/schedule", json={
+            "candidate_id": cand_id,
+            "job_description_id": job["id"],
+            "scheduled_start": datetime.datetime.utcnow().isoformat()
+        }, headers=rec_headers)
+        assert sched_res.status_code == 200
+        sched = sched_res.json()
+        sess_id = sched["session_id"]
+        token = sched["session_token"]
+
+        # Clean any existing events for this session and add exactly 2 spaced events using test db session
+        try:
+            from app.models.entities import IntegrityEvent
+            from tests.conftest import TestingSessionLocal
+            db = TestingSessionLocal()
+        except ImportError:
+            from app.core.database import SessionLocal
+            db = SessionLocal()
+
+        db.query(IntegrityEvent).filter(IntegrityEvent.session_id == sess_id).delete()
+        db.commit()
+        e1 = IntegrityEvent(session_id=sess_id, event_type="tab_switch", timestamp=datetime.datetime.utcnow() - datetime.timedelta(seconds=40))
+        e2 = IntegrityEvent(session_id=sess_id, event_type="tab_switch", timestamp=datetime.datetime.utcnow() - datetime.timedelta(seconds=20))
+        db.add(e1)
+        db.add(e2)
+        db.commit()
+        cnt = db.query(IntegrityEvent).filter(IntegrityEvent.session_id == sess_id).count()
+        db.close()
+        assert cnt == 2, f"Expected 2 events inserted, found {cnt}"
+
+        # The third tab switch event arrives and triggers termination
+        r3 = client.post(f"/api/interview/{token}/integrity-event", json={"event_type": "tab_switch"})
+        assert r3.status_code == 200
+        assert r3.json().get("terminated") is True, f"Got: {r3.json()}"
+        assert "terminated" in r3.json()["termination_reason"].lower()
+
+
 
 

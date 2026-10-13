@@ -554,6 +554,7 @@ def log_integrity_event(token: str, event_in: IntegrityEventCreate, db: Session 
     if recent_dup:
         return {
             "status": "deduplicated",
+            "terminated": False,
             "message": "Repeated event within debounce threshold suppressed."
         }
 

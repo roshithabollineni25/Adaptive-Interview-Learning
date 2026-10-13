@@ -179,6 +179,8 @@ def list_candidate_interviews(
             decision_status = "Rejected"
         elif recruiter_dec == "On Hold":
             decision_status = "On Hold"
+        elif recruiter_dec == "Under Review":
+            decision_status = "Under Review"
         else:
             decision_status = "Decision Pending"
 
