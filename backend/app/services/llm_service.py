@@ -272,7 +272,7 @@ class LLMService:
                 "education": ["Computer Science or relevant technical background"]
             }
 
-        elif "evaluate candidate answer" in lower:
+        elif "evaluate candidate answer" in lower or "assessment engine" in lower or "evaluate the candidate" in lower:
             # Extract the actual candidate answer from prompt
             cand_answer = ""
             if "candidate answer:" in lower:
@@ -283,32 +283,37 @@ class LLMService:
                         cand_answer = parts[1].strip()
 
             word_count = len(cand_answer.split())
-            
-            # Algorithmic scoring based on answer depth and structure
+            has_advanced_keywords = any(k in cand_answer.lower() for k in ["raft", "consensus", "replication", "state machine", "byzantine", "partition", "fencing", "lineariz", "atomicity", "paxos", "failover"])
+
+            # Algorithmic scoring based on technical depth, keywords, and reasoning completeness
             if word_count < 10:
-                score = 4.0
+                score = 3.5
                 diff = "Recovery"
-                strengths = ["Attempted brief answer"]
-                weaknesses = ["Response was too brief to evaluate full technical depth", "Lacked concrete examples or trade-off analysis"]
-                reason = "Candidate gave an extremely brief response; initiating recovery prompt."
-            elif word_count < 30:
+                strengths = ["Attempted brief response"]
+                weaknesses = ["Response lacked technical depth", "Omitted prerequisite mechanisms and failure recovery logic"]
+                missing_concepts = ["Foundational prerequisite architecture and baseline failure recovery"]
+                reason = "Candidate gave an extremely brief response; stepping down to foundational prerequisite concepts."
+            elif word_count >= 24 and has_advanced_keywords:
+                score = 8.8
+                diff = "Hard"
+                strengths = ["Comprehensive answer with detailed explanation", "Structured articulation of system considerations and trade-offs"]
+                weaknesses = []
+                missing_concepts = []
+                reason = "Detailed response demonstrating technical mastery; probing deeper into advanced scale and fault tolerance."
+            elif word_count >= 10:
                 score = 6.0
                 diff = "Medium"
-                strengths = ["Addressed core topic", "Clear terminology"]
-                weaknesses = ["Could expand with specific architecture decisions and trade-offs"]
-                reason = "Response answered the basic premise; maintaining medium difficulty."
-            elif word_count < 80:
-                score = 7.8
-                diff = "Medium"
-                strengths = ["Solid conceptual explanation", "Clear communication of key concepts"]
-                weaknesses = ["Could include operational edge cases or production metrics"]
-                reason = "Candidate demonstrated clear technical competence; progressing adaptive track."
+                strengths = ["Addressed core topic", "Clear technical terminology"]
+                weaknesses = ["Omitted partition recovery trade-offs and edge case handling"]
+                missing_concepts = ["Partition recovery trade-offs and fencing mechanisms"]
+                reason = "Response answered the basic premise; investigating specific missing operational concepts."
             else:
-                score = 8.5
-                diff = "Hard"
-                strengths = ["Comprehensive answer with detailed explanation", "Structured articulation of system considerations"]
-                weaknesses = ["Minor opportunities to expand on monitoring and recovery strategies"]
-                reason = "Detailed response exceeding expectations; advancing to higher complexity."
+                score = 4.0
+                diff = "Recovery"
+                strengths = ["Attempted response"]
+                weaknesses = ["Needs expansion on technical fundamentals"]
+                missing_concepts = ["Foundational architecture concepts"]
+                reason = "Candidate struggled to articulate technical mechanisms; stepping down to prerequisite concepts."
 
             # Real evidence quote directly from the candidate's actual answer
             evidence_snippet = cand_answer[:140] if cand_answer else "Candidate provided verbal response."
@@ -320,6 +325,7 @@ class LLMService:
                 "clarity_of_communication": float(min(10.0, score + 0.4)),
                 "strengths": strengths,
                 "weaknesses": weaknesses,
+                "missing_concepts": missing_concepts,
                 "evidence_quote": evidence_snippet,
                 "confidence_level": "Moderate (Algorithmic Baseline)",
                 "next_difficulty": diff,
@@ -344,72 +350,53 @@ class LLMService:
             role_match = re.search(r"position\s*['\"]([^'\"]+)['\"]", prompt, re.IGNORECASE)
             job_title = role_match.group(1) if role_match else "Software Engineering"
 
+            # Detect target competency
+            comp_match = re.search(r"target competency to assess:\s*['\"]?([^'\"\n]+)['\"]?", prompt, re.IGNORECASE)
+            target_comp = comp_match.group(1).strip() if comp_match else "Technical Architecture"
+
             # Detect target difficulty
-            diff_match = re.search(r"target difficulty:\s*(\w+)", lower)
+            diff_match = re.search(r"target difficulty(?: level)?:\s*['\"]?(\w+)['\"]?", lower)
             difficulty = diff_match.group(1).capitalize() if diff_match else "Medium"
 
-            # Vary question types adaptively across trajectory
-            if order_idx == 2 or "multiple choice" in lower:
+            # Dynamic question formulation honoring closed-loop adaptive strategy
+            if difficulty in ["Recovery", "Easy"] or "step down" in lower or "step_down" in lower:
                 return {
-                    "question": f"In designing scalable microservices for {job_title}, which architectural pattern is most effective for preventing cascading system failures during downstream outages?",
-                    "competency_tested": "Resilient Architecture",
-                    "difficulty_level": difficulty,
-                    "expected_criteria": "Selection of Circuit Breaker with bulkhead isolation pattern.",
+                    "question": f"To establish baseline understanding in {target_comp}: What fundamental principle or data structure guarantees consistency before applying complex distributed operations?",
+                    "competency_tested": target_comp,
+                    "difficulty_level": difficulty if difficulty in ["Recovery", "Easy"] else "Recovery",
+                    "expected_criteria": f"Identifies foundational mechanisms and prerequisite logic for {target_comp}.",
                     "question_type": "multiple_choice",
                     "options": [
-                        "A) Circuit Breaker with Bulkhead Isolation",
-                        "B) Synchronous RPC retry with exponential escalation",
-                        "C) Centralized in-memory shared state lock",
-                        "D) Full database table lock per client session"
+                        f"A) Atomic state validation and transaction logs in {target_comp}",
+                        "B) Ignoring failures and continuing execution without persistence",
+                        "C) Infinite recursion without timeout or backoff",
+                        "D) Dropping all state caches on every read operation"
                     ]
                 }
-            elif order_idx == 3 or "fill" in lower:
+            elif "missing" in lower or "investigate" in lower or "follow-up" in lower or difficulty == "Medium" and order_idx > 1 and "probe deeper" not in lower:
                 return {
-                    "question": "In distributed consensus protocols, split-brain scenarios are prevented when a cluster requires a strict _____ of nodes to commit state transitions.",
-                    "competency_tested": "Distributed Consistency",
-                    "difficulty_level": difficulty,
-                    "expected_criteria": "quorum (or majority)",
-                    "question_type": "fill_blank",
+                    "question": f"Following up on your previous answer regarding {target_comp}: Specifically, how do you handle partition recovery and fencing to address the missing operational considerations you noted?",
+                    "competency_tested": target_comp,
+                    "difficulty_level": "Medium",
+                    "expected_criteria": f"Addresses the specific missing operational and failure-recovery concept in {target_comp}.",
+                    "question_type": "open_ended",
                     "options": []
                 }
-            elif order_idx == 4 or "spoken" in lower:
+            elif "probe deeper" in lower or "hard" in lower or difficulty == "Hard":
                 return {
-                    "question": f"Listen carefully and respond verbally: In a production outage where 99th percentile latency suddenly spikes due to database lock contention, what diagnostic telemetry would you inspect first, and how would you resolve the blocking locks?",
-                    "competency_tested": "Production Incident Debugging",
-                    "difficulty_level": difficulty,
-                    "expected_criteria": "Candidate identifies active lock queries, transaction deadlocks, connection pool saturation, and kill/rollback strategies.",
-                    "question_type": "spoken_only",
-                    "options": []
-                }
-            elif order_idx == 5:
-                return {
-                    "question": f"Which isolation level in relational databases guarantees protection against dirty reads, non-repeatable reads, and phantom reads?",
-                    "competency_tested": "Database Architecture",
-                    "difficulty_level": difficulty,
-                    "expected_criteria": "Serializable isolation level.",
-                    "question_type": "multiple_choice",
-                    "options": [
-                        "A) Serializable",
-                        "B) Repeatable Read",
-                        "C) Read Committed",
-                        "D) Read Uncommitted"
-                    ]
-                }
-            elif order_idx == 6:
-                return {
-                    "question": "To avoid race conditions under high concurrent writes in an event-driven system without distributed locks, developers frequently use _____ concurrency control with version tags.",
-                    "competency_tested": "Concurrency & State Control",
-                    "difficulty_level": difficulty,
-                    "expected_criteria": "optimistic",
-                    "question_type": "fill_blank",
+                    "question": f"Given your strong foundation in {target_comp}: At extreme scale (100k+ requests/sec across multiple cloud regions), how do you resolve consensus latency and split-brain recovery under asymmetric network partitions?",
+                    "competency_tested": target_comp,
+                    "difficulty_level": "Hard",
+                    "expected_criteria": f"Detailed trade-off analysis of consensus latency, Byzantine vs crash fault tolerance, and multi-region replication in {target_comp}.",
+                    "question_type": "open_ended",
                     "options": []
                 }
             else:
                 return {
-                    "question": f"Walk through how you would architect a resilient, high-throughput backend service for '{job_title}', detailing API design, database consistency, and caching strategy.",
-                    "competency_tested": "System Architecture & Scalability",
+                    "question": f"In {job_title}, describe how you design and implement the core architecture for {target_comp}, including primary components and data flows.",
+                    "competency_tested": target_comp,
                     "difficulty_level": difficulty,
-                    "expected_criteria": "Clear decomposition, data consistency trade-offs, cache invalidation, and monitoring telemetry.",
+                    "expected_criteria": f"Demonstrates solid conceptual knowledge and architectural design in {target_comp}.",
                     "question_type": "open_ended",
                     "options": []
                 }

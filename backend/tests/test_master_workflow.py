@@ -765,6 +765,179 @@ def test_adaptive_intelligence_modules():
         assert len(screenshot_events) >= 1
 
 
+def test_real_time_closed_loop_adaptive_engine():
+    """
+    Verifies the closed-loop real-time adaptive interview engine:
+    1. Strong answer (score >= 7.5) -> updates profile to Demonstrated, probes deeper at Hard difficulty.
+    2. Partially correct answer (4.5 <= score < 7.5) -> identifies missing concept, follows up specifically on that concept.
+    3. Weak answer (score < 4.5) -> updates profile to Needs Prerequisite Review, steps down to prerequisite fundamentals at Recovery/Easy difficulty.
+    4. Mixed performance -> maintains independent difficulty and status per competency.
+    5. Reload recovery -> preserves adaptive state, does not reset difficulty, does not lose answers, does not duplicate questions.
+    """
+    # 1. Setup recruiter and job with defined competencies
+    rec_email = f"rec.adaptive.{datetime.datetime.utcnow().timestamp()}@adaptive.io"
+    rec_reg = client.post("/api/auth/register", json={
+        "email": rec_email,
+        "password": "Password123!",
+        "full_name": "Senior Systems Architect",
+        "role": "recruiter"
+    }).json()
+    rec_headers = {"Authorization": f"Bearer {rec_reg['access_token']}"}
+
+    job_res = client.post("/api/recruitment/jobs", json={
+        "title": "Distributed Systems Engineer",
+        "department": "Infrastructure",
+        "raw_text": "We require expertise in Distributed Consensus and High-Performance Network Protocols.",
+        "experience_level": "Senior"
+    }, headers=rec_headers)
+    assert job_res.status_code == 200
+    job_id = job_res.json()["id"]
+
+    # 2. Setup candidate with enrolled face
+    cand_email = f"cand.adaptive.{datetime.datetime.utcnow().timestamp()}@gmail.com"
+    cand_reg = client.post("/api/auth/register", json={
+        "email": cand_email,
+        "password": "Password123!",
+        "full_name": "Alex Mercer",
+        "role": "candidate"
+    }).json()
+    cand_headers = {"Authorization": f"Bearer {cand_reg['access_token']}"}
+
+    app_res = client.post(
+        "/api/candidate-portal/application",
+        data={"target_role": "Distributed Systems Engineer"},
+        files={"file": ("resume.txt", b"Expertise in Distributed Systems, Raft, and C++.", "text/plain")},
+        headers=cand_headers
+    )
+    cand_id = app_res.json()["candidate"]["id"]
+
+    import numpy as np
+    import cv2
+    import base64
+    face_canvas = np.ones((400, 400, 3), dtype=np.uint8) * 220
+    cv2.ellipse(face_canvas, (200, 200), (90, 120), 0, 0, 360, (180, 160, 150), -1)
+    cv2.ellipse(face_canvas, (165, 170), (14, 8), 0, 0, 360, (60, 50, 40), -1)
+    cv2.ellipse(face_canvas, (235, 170), (14, 8), 0, 0, 360, (60, 50, 40), -1)
+    cv2.circle(face_canvas, (165, 170), 4, (10, 10, 10), -1)
+    cv2.circle(face_canvas, (235, 170), 4, (10, 10, 10), -1)
+    cv2.ellipse(face_canvas, (165, 150), (20, 4), -10, 0, 360, (50, 40, 30), -1)
+    cv2.ellipse(face_canvas, (235, 150), (20, 4), 10, 0, 360, (50, 40, 30), -1)
+    cv2.line(face_canvas, (200, 180), (200, 220), (120, 100, 90), 3)
+    cv2.line(face_canvas, (200, 220), (190, 228), (120, 100, 90), 2)
+    cv2.line(face_canvas, (190, 228), (210, 228), (120, 100, 90), 2)
+    cv2.ellipse(face_canvas, (200, 260), (30, 10), 0, 0, 360, (100, 60, 70), -1)
+    _, buf = cv2.imencode('.jpg', face_canvas)
+    face_b64 = "data:image/jpeg;base64," + base64.b64encode(buf).decode('utf-8')
+
+    enroll_res = client.post("/api/candidate-portal/enroll-face", json={"face_image_base64": face_b64}, headers=cand_headers)
+    assert enroll_res.status_code == 200
+
+    # 3. Schedule interview
+    sched_res = client.post("/api/recruitment/sessions/schedule", json={
+        "candidate_id": cand_id,
+        "job_description_id": job_id,
+        "scheduled_start": datetime.datetime.utcnow().isoformat()
+    }, headers=rec_headers)
+    session_data = sched_res.json()
+    token = session_data["session_token"]
+    session_id = session_data["session_id"]
+
+    # 4. Pass biometric and ID card verification gate
+    id_canvas = np.ones((300, 450, 3), dtype=np.uint8) * 240
+    cv2.rectangle(id_canvas, (20, 20), (430, 280), (70, 70, 70), 3)
+    cv2.putText(id_canvas, "ALEX MERCER", (40, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (50, 50, 50), 2)
+    _, id_buf = cv2.imencode('.jpg', id_canvas)
+    id_b64 = "data:image/jpeg;base64," + base64.b64encode(id_buf).decode('utf-8')
+
+    gate_res = client.post(f"/api/interview/{token}/verify-identity", json={
+        "probe_frame_base64": face_b64,
+        "id_card_frame_base64": id_b64
+    })
+    assert gate_res.status_code == 200
+    q1 = gate_res.json()["first_question"]
+    assert q1["order_index"] == 1
+    assert q1["difficulty_level"] == "Medium"
+
+    # 5. CYCLE 1: Strong Answer -> Probe deeper at Hard difficulty
+    ans1_res = client.post(f"/api/interview/{token}/submit-answer", json={
+        "question_id": q1["id"],
+        "answer_text": "We implement Raft consensus using state machine replication, leader election heartbeats, term counters, and log compaction with snapshots to guarantee safety and liveness under crash fault conditions.",
+        "answer_mode": "typed"
+    })
+    assert ans1_res.status_code == 200
+    ans1_data = ans1_res.json()
+    assert ans1_data["evaluation"]["score"] >= 7.5
+    assert ans1_data["next_question_available"] is True
+    q2 = ans1_data["next_question"]
+
+    # Verify that strong performance on Q1 probed deeper into advanced scale at Hard difficulty
+    assert q2["order_index"] == 2
+    assert q2["difficulty_level"] == "Hard"
+    assert "probe" in q2.get("adaptation_reason", "").lower() or "hard" in q2.get("adaptation_reason", "").lower() or "strong" in q2.get("adaptation_reason", "").lower()
+
+    # 6. CYCLE 2: Partially Correct Answer on Q2 -> Focuses on Missing Concept at Medium difficulty
+    ans2_res = client.post(f"/api/interview/{token}/submit-answer", json={
+        "question_id": q2["id"],
+        "answer_text": "We replicate across nodes with term numbers, but during network partitions we allow local reads.",
+        "answer_mode": "typed"
+    })
+    assert ans2_res.status_code == 200
+    ans2_data = ans2_res.json()
+    assert 4.5 <= ans2_data["evaluation"]["score"] < 7.5
+    assert ans2_data["next_question_available"] is True
+    q3 = ans2_data["next_question"]
+
+    # Verify that partially correct answer triggered focused investigation of missing concept
+    assert q3["order_index"] == 3
+    assert q3["difficulty_level"] == "Medium"
+    assert "missing" in q3.get("adaptation_reason", "").lower() or "investigating" in q3.get("adaptation_reason", "").lower()
+
+    # 7. CYCLE 3: Weak / Flawed Answer on Q3 -> Steps down to prerequisite fundamentals at Recovery/Easy difficulty
+    ans3_res = client.post(f"/api/interview/{token}/submit-answer", json={
+        "question_id": q3["id"],
+        "answer_text": "Just reboot.",
+        "answer_mode": "typed"
+    })
+    assert ans3_res.status_code == 200
+    ans3_data = ans3_res.json()
+    assert ans3_data["evaluation"]["score"] < 4.5
+    assert ans3_data["next_question_available"] is True
+    q4 = ans3_data["next_question"]
+
+    # Verify that weak answer stepped down to fundamental prerequisite concepts at Recovery/Easy difficulty
+    assert q4["order_index"] == 4
+    assert q4["difficulty_level"] in ["Recovery", "Easy"]
+    assert "prerequisite" in q4.get("adaptation_reason", "").lower() or "step" in q4.get("adaptation_reason", "").lower()
+
+    # 8. Reload Resilience: reloading during active question recovers exact state without resetting difficulty
+    reload_res = client.get(f"/api/interview/{token}")
+    assert reload_res.status_code == 200
+    reload_data = reload_res.json()
+    assert reload_data["active_question"]["id"] == q4["id"]
+    assert reload_data["active_question"]["difficulty_level"] == q4["difficulty_level"]
+    assert reload_data["total_questions_completed"] == 3
+
+    # 9. Answer Q4 to satisfy MIN_QUESTIONS_PER_SESSION and verify competency profile
+    ans4_res = client.post(f"/api/interview/{token}/submit-answer", json={
+        "question_id": q4["id"],
+        "answer_text": "A) Atomic state validation and transaction logs in Distributed Consensus",
+        "answer_mode": "typed"
+    })
+    assert ans4_res.status_code == 200
+
+    # 10. Verify Completed Dossier and Persistent Competency Profile
+    dossier = client.get(f"/api/recruitment/sessions/{session_id}", headers=rec_headers).json()
+    assert "skill_gap_analysis" in dossier
+    profile = dossier["skill_gap_analysis"].get("competency_profile")
+    assert profile is not None
+    assert len(profile) > 0
+    # Confirm that candidate's performance history and scores were tracked per competency
+    tracked_comps = [c for c in profile.values() if c.get("questions_count", 0) > 0]
+    assert len(tracked_comps) > 0
+    assert tracked_comps[0]["average_score"] is not None
+    assert len(tracked_comps[0]["history"]) > 0
+
+
 
 
 

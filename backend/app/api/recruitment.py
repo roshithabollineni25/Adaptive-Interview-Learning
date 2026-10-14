@@ -406,7 +406,7 @@ def get_candidate_interview(token: str, db: Session = Depends(get_db)):
     active_question = None
     if session.identity_verified and session.status in ["in_progress", "setup"]:
         for q in session.questions:
-            if q.candidate_answer is None:
+            if q.candidate_answer is None or q.score is None:
                 active_question = {
                     "id": q.id,
                     "order_index": q.order_index,
@@ -414,7 +414,9 @@ def get_candidate_interview(token: str, db: Session = Depends(get_db)):
                     "competency_tested": q.competency_tested,
                     "difficulty_level": q.difficulty_level,
                     "question_type": getattr(q, "question_type", "open_ended") or "open_ended",
-                    "options": getattr(q, "options", []) or []
+                    "options": getattr(q, "options", []) or [],
+                    "adaptation_reason": getattr(q, "adaptation_reason", None),
+                    "candidate_answer": q.candidate_answer
                 }
                 break
 
@@ -432,7 +434,8 @@ def get_candidate_interview(token: str, db: Session = Depends(get_db)):
                     "competency_tested": next_q.competency_tested,
                     "difficulty_level": next_q.difficulty_level,
                     "question_type": getattr(next_q, "question_type", "open_ended") or "open_ended",
-                    "options": getattr(next_q, "options", []) or []
+                    "options": getattr(next_q, "options", []) or [],
+                    "adaptation_reason": getattr(next_q, "adaptation_reason", None)
                 }
 
     return {
@@ -564,7 +567,8 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
                     "competency_tested": unanswered.competency_tested,
                     "difficulty_level": unanswered.difficulty_level,
                     "question_type": getattr(unanswered, "question_type", "open_ended") or "open_ended",
-                    "options": getattr(unanswered, "options", []) or []
+                    "options": getattr(unanswered, "options", []) or [],
+                    "adaptation_reason": getattr(unanswered, "adaptation_reason", None)
                 }
             status_val = session.status.value if hasattr(session.status, "value") else str(session.status)
             is_comp = session.status in [InterviewStatus.COMPLETED, "completed"]
@@ -586,10 +590,10 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
                 }
             }
 
-    # Find the active unanswered question
+    # Find the active question (either unanswered, or answered but awaiting evaluation retry)
     active_q = None
     for q in session.questions:
-        if q.candidate_answer is None:
+        if q.candidate_answer is None or q.score is None:
             active_q = q
             break
 
@@ -619,16 +623,26 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
             }
         raise HTTPException(status_code=400, detail="No active question waiting for response")
 
-    # Submit and evaluate answer reliably
-    eval_result = interview_engine.submit_and_evaluate_answer(
-        session=session,
-        question=active_q,
-        answer_text=answer_in.answer_text,
-        db=db,
-        answer_mode=answer_in.answer_mode or "typed",
-        selected_option=answer_in.selected_option,
-        voice_transcript=answer_in.voice_transcript
-    )
+    # Submit and evaluate answer reliably with safe error recovery
+    try:
+        eval_result = interview_engine.submit_and_evaluate_answer(
+            session=session,
+            question=active_q,
+            answer_text=answer_in.answer_text,
+            db=db,
+            answer_mode=answer_in.answer_mode or "typed",
+            selected_option=answer_in.selected_option,
+            voice_transcript=answer_in.voice_transcript
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during candidate answer evaluation or adaptation: {e}", exc_info=True)
+        db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Evaluation service encountered a temporary error ({str(e)}). Your answer has been safely saved. Please click Submit again to retry."
+        )
 
     next_q = eval_result.get("next_question")
     next_q_data = None
@@ -640,7 +654,8 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
             "competency_tested": next_q.competency_tested,
             "difficulty_level": next_q.difficulty_level,
             "question_type": getattr(next_q, "question_type", "open_ended") or "open_ended",
-            "options": getattr(next_q, "options", []) or []
+            "options": getattr(next_q, "options", []) or [],
+            "adaptation_reason": getattr(next_q, "adaptation_reason", None)
         }
 
     status_val = session.status.value if hasattr(session.status, "value") else str(session.status)
