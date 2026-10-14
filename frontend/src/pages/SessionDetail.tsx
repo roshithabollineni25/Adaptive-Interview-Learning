@@ -4,7 +4,8 @@ import { apiClient } from '../api/client';
 import type { InterviewSessionDetail } from '../types';
 import { 
   ArrowLeft, CheckCircle, ShieldAlert, 
-  BarChart3, Award, Quote, UserCheck 
+  BarChart3, Award, Quote, UserCheck,
+  Camera, HelpCircle
 } from 'lucide-react';
 
 export const SessionDetail: React.FC = () => {
@@ -245,9 +246,41 @@ export const SessionDetail: React.FC = () => {
                     : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>None</span>}
                 </div>
               </div>
+
+              {/* Detailed Evidence Table if available */}
+              {(session.skill_gap_analysis as any).detailed_evidence && (
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                    Competency Evidence Breakdown:
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
+                    {((session.skill_gap_analysis as any).detailed_evidence as any[]).map((d: any, idx: number) => (
+                      <div key={idx} style={{ 
+                        fontSize: 11, 
+                        padding: '6px 8px', 
+                        borderRadius: 6, 
+                        backgroundColor: d.status === 'Demonstrated' ? '#e8f5e9' : d.status === 'Claimed but Unvalidated' ? '#fff8e1' : d.status === 'Not Demonstrated' ? '#ffebee' : 'var(--bg-subtle)',
+                        border: '1px solid var(--border-light)'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                          <span>{d.competency}</span>
+                          <span style={{ 
+                            color: d.status === 'Demonstrated' ? 'var(--success)' : d.status === 'Claimed but Unvalidated' ? 'var(--warning)' : d.status === 'Not Demonstrated' ? 'var(--danger)' : 'var(--text-muted)'
+                          }}>
+                            {d.status} {d.score !== null ? `(${d.score}/10)` : ''}
+                          </span>
+                        </div>
+                        <div style={{ color: 'var(--text-secondary)', marginTop: 2, fontSize: 10 }}>
+                          {d.explanation}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '16px 0' }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>
               Skill-gap analysis generates upon interview completion.
             </div>
           )}
@@ -255,26 +288,54 @@ export const SessionDetail: React.FC = () => {
 
         {/* Module 2: Proctor Integrity Telemetry */}
         <div className="card">
-          <h3 style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-            <ShieldAlert size={18} color="var(--danger)" /> Proctor Integrity Telemetry ({session.integrity_events.length})
-          </h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+              <ShieldAlert size={18} color="var(--danger)" /> Proctor Integrity Telemetry ({session.integrity_events.length})
+            </h3>
+            {session.evidence_report && (session.evidence_report as any).integrity_summary && (
+              <span className={`badge ${
+                (session.evidence_report as any).integrity_summary.risk_level === 'Low' ? 'badge-success' :
+                (session.evidence_report as any).integrity_summary.risk_level === 'Moderate' ? 'badge-warning' : 'badge-danger'
+              }`} style={{ fontSize: 11 }}>
+                Risk Level: {(session.evidence_report as any).integrity_summary.risk_level}
+              </span>
+            )}
+          </div>
+
           {session.integrity_events.length === 0 ? (
             <div style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, padding: '16px 0' }}>
               <CheckCircle size={18} /> No integrity anomalies logged. Candidate maintained camera and window focus throughout.
             </div>
           ) : (
-            <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {session.integrity_events.map((ev) => (
-                <div key={ev.id} style={{ fontSize: 12, padding: '10px 12px', background: '#ffebee', border: '1px solid #ffcdd2', borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <span style={{ color: 'var(--danger)', fontWeight: 700, display: 'block' }}>
-                      {ev.event_type.replace('_', ' ').toUpperCase()} (Severity: {ev.severity})
-                    </span>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
-                      {ev.metadata_info?.reason || 'Event timestamped during questioning'}
-                    </span>
+                <div key={ev.id} style={{ fontSize: 12, padding: '10px 12px', background: '#ffebee', border: '1px solid #ffcdd2', borderRadius: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <span style={{ color: 'var(--danger)', fontWeight: 700, display: 'block' }}>
+                        {ev.event_type.replace(/_/g, ' ').toUpperCase()} (Severity: {ev.severity})
+                      </span>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
+                        {ev.metadata_info?.reason || 'Event timestamped during questioning'}
+                      </span>
+                    </div>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{new Date(ev.timestamp).toLocaleTimeString()}</span>
                   </div>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{new Date(ev.timestamp).toLocaleTimeString()}</span>
+
+                  {/* Render camera snapshot thumbnail if captured */}
+                  {ev.screenshot_base64 && (
+                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <img 
+                        src={ev.screenshot_base64} 
+                        alt="Proctor Incident Snapshot" 
+                        style={{ width: 80, height: 50, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--danger)' }} 
+                      />
+                      <span style={{ fontSize: 10, color: 'var(--danger)', fontWeight: 600 }}>
+                        <Camera size={12} style={{ display: 'inline', marginRight: 2 }} />
+                        Captured Incident Frame Evidence
+                      </span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -333,6 +394,23 @@ export const SessionDetail: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {/* Suggested Technical Follow-Up Assessments */}
+      {session.evidence_report && (session.evidence_report as any).suggested_followups && (session.evidence_report as any).suggested_followups.length > 0 && (
+        <div className="card" style={{ marginBottom: 24, backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-light)' }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <HelpCircle size={18} color="var(--sage-accent)" /> Recommended Technical Follow-Up Focus
+          </h3>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+            Based on unvalidated resume claims and skill gaps identified during this session:
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, color: 'var(--text-primary)' }}>
+            {((session.evidence_report as any).suggested_followups as string[]).map((item, idx) => (
+              <li key={idx}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Human Recruiter Review & Decision */}
       <div className="card" style={{ border: '1px solid var(--sage-accent)' }}>

@@ -131,6 +131,7 @@ export interface IntegrityEvent {
   severity: string;
   confidence?: number;
   metadata_info?: any;
+  screenshot_base64?: string;
   timestamp: string;
 }
 

@@ -25,6 +25,7 @@ from app.services.llm_service import llm_service
 from app.services.email_service import email_service
 from app.services.interview_engine import interview_engine
 from app.services.identity_service import compare_faces, verify_id_card_document
+from app.services import identity_service
 
 router = APIRouter(prefix="/recruitment", tags=["Recruitment"])
 
@@ -163,6 +164,7 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db), user: Use
             "severity": ev.severity,
             "confidence": ev.confidence,
             "metadata_info": ev.metadata_info,
+            "screenshot_base64": getattr(ev, "screenshot_base64", None),
             "timestamp": ev.timestamp
         })
 
@@ -416,18 +418,22 @@ def get_candidate_interview(token: str, db: Session = Depends(get_db)):
                 }
                 break
 
-        # Reload Recovery: If in progress and all existing questions are answered but total < max, generate next question!
-        if not active_question and session.status == "in_progress" and len(session.questions) < settings.MAX_QUESTIONS_PER_SESSION:
-            next_q = interview_engine.generate_next_question(session, db)
-            active_question = {
-                "id": next_q.id,
-                "order_index": next_q.order_index,
-                "question_text": next_q.question_text,
-                "competency_tested": next_q.competency_tested,
-                "difficulty_level": next_q.difficulty_level,
-                "question_type": getattr(next_q, "question_type", "open_ended") or "open_ended",
-                "options": getattr(next_q, "options", []) or []
-            }
+        # Reload Recovery: If in progress and all existing questions are answered, check stopping policy
+        if not active_question and session.status == "in_progress":
+            should_stop, stop_reason = interview_engine.should_stop_interview(session)
+            if should_stop:
+                interview_engine.finalize_interview(session, db, stopping_rationale=stop_reason)
+            else:
+                next_q = interview_engine.generate_next_question(session, db)
+                active_question = {
+                    "id": next_q.id,
+                    "order_index": next_q.order_index,
+                    "question_text": next_q.question_text,
+                    "competency_tested": next_q.competency_tested,
+                    "difficulty_level": next_q.difficulty_level,
+                    "question_type": getattr(next_q, "question_type", "open_ended") or "open_ended",
+                    "options": getattr(next_q, "options", []) or []
+                }
 
     return {
         "session_token": session.session_token,
@@ -543,6 +549,43 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
     if session.status == "completed":
         raise HTTPException(status_code=400, detail="Interview already completed")
 
+    # Check for duplicate / idempotent re-submission:
+    # 1. If explicit question_id is provided and that question is already answered:
+    if answer_in.question_id:
+        target_q = next((q for q in session.questions if q.id == answer_in.question_id), None)
+        if target_q and target_q.candidate_answer is not None:
+            unanswered = next((q for q in session.questions if q.candidate_answer is None), None)
+            next_q_data = None
+            if unanswered:
+                next_q_data = {
+                    "id": unanswered.id,
+                    "order_index": unanswered.order_index,
+                    "question_text": unanswered.question_text,
+                    "competency_tested": unanswered.competency_tested,
+                    "difficulty_level": unanswered.difficulty_level,
+                    "question_type": getattr(unanswered, "question_type", "open_ended") or "open_ended",
+                    "options": getattr(unanswered, "options", []) or []
+                }
+            status_val = session.status.value if hasattr(session.status, "value") else str(session.status)
+            is_comp = session.status in [InterviewStatus.COMPLETED, "completed"]
+            return {
+                "status": status_val,
+                "question_id": target_q.id,
+                "is_interview_complete": is_comp,
+                "interview_completed": is_comp,
+                "next_question_available": unanswered is not None,
+                "next_question": next_q_data,
+                "total_questions_completed": len([q for q in session.questions if q.candidate_answer is not None]),
+                "evaluation": {
+                    "score": target_q.score,
+                    "strengths": target_q.strengths or [],
+                    "weaknesses": target_q.weaknesses or [],
+                    "adaptation_reason": target_q.adaptation_reason,
+                    "next_difficulty": session.current_difficulty,
+                    "idempotent": True
+                }
+            }
+
     # Find the active unanswered question
     active_q = None
     for q in session.questions:
@@ -550,7 +593,30 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
             active_q = q
             break
 
+    # If all existing questions are answered and interview is completed / waiting
     if not active_q:
+        answered_qs = [q for q in session.questions if q.candidate_answer is not None]
+        if answered_qs:
+            last_answered = sorted(answered_qs, key=lambda x: x.order_index)[-1]
+            status_val = session.status.value if hasattr(session.status, "value") else str(session.status)
+            is_comp = session.status in [InterviewStatus.COMPLETED, "completed"]
+            return {
+                "status": status_val,
+                "question_id": last_answered.id,
+                "is_interview_complete": is_comp,
+                "interview_completed": is_comp,
+                "next_question_available": False,
+                "next_question": None,
+                "total_questions_completed": len(answered_qs),
+                "evaluation": {
+                    "score": last_answered.score,
+                    "strengths": last_answered.strengths or [],
+                    "weaknesses": last_answered.weaknesses or [],
+                    "adaptation_reason": last_answered.adaptation_reason,
+                    "next_difficulty": session.current_difficulty,
+                    "idempotent": True
+                }
+            }
         raise HTTPException(status_code=400, detail="No active question waiting for response")
 
     # Submit and evaluate answer reliably
@@ -577,10 +643,13 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
             "options": getattr(next_q, "options", []) or []
         }
 
+    status_val = session.status.value if hasattr(session.status, "value") else str(session.status)
+    is_comp = eval_result.get("is_interview_complete", session.status in [InterviewStatus.COMPLETED, "completed"])
     return {
-        "status": session.status,
+        "status": status_val,
         "question_id": active_q.id,
-        "is_interview_complete": eval_result.get("is_interview_complete", session.status == "completed"),
+        "is_interview_complete": is_comp,
+        "interview_completed": is_comp,
         "next_question_available": next_q is not None,
         "next_question": next_q_data,
         "total_questions_completed": len([q for q in session.questions if q.candidate_answer is not None]),
@@ -589,7 +658,8 @@ def submit_answer(token: str, answer_in: QuestionAnswerSubmit, db: Session = Dep
             "strengths": active_q.strengths,
             "weaknesses": active_q.weaknesses,
             "adaptation_reason": active_q.adaptation_reason,
-            "next_difficulty": session.current_difficulty
+            "next_difficulty": session.current_difficulty,
+            "idempotent": eval_result.get("evaluation", {}).get("idempotent", False)
         }
     }
 
@@ -688,12 +758,18 @@ def log_integrity_event(token: str, event_in: IntegrityEventCreate, db: Session 
             "message": "Repeated event within debounce threshold suppressed."
         }
 
+    # Preserve qualifying camera screenshot for evidence audit (e.g. face missing, mismatch, multi-face)
+    qualifying_screenshot = None
+    if event_in.frame_base64 and (severity in ["high", "critical", "medium"] or "mismatch" in actual_event_type or "face" in actual_event_type):
+        qualifying_screenshot = event_in.frame_base64
+
     event = IntegrityEvent(
         session_id=session.id,
         event_type=actual_event_type,
         severity=severity,
         confidence=confidence,
         metadata_info=meta,
+        screenshot_base64=qualifying_screenshot,
         timestamp=now
     )
     db.add(event)

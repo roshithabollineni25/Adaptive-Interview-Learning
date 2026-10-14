@@ -173,6 +173,7 @@ class IntegrityEvent(Base):
     severity = Column(String(50), default="low")  # low, medium, high
     confidence = Column(Float, nullable=True)
     metadata_info = Column(JSON, nullable=True)
+    screenshot_base64 = Column(Text, nullable=True)  # Snapshot capture for qualifying integrity incidents
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     session = relationship("InterviewSession", back_populates="integrity_events")

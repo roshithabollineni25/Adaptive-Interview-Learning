@@ -83,6 +83,7 @@ class IdentityVerificationProbe(BaseModel):
 
 # Interview Session schemas
 class QuestionAnswerSubmit(BaseModel):
+    question_id: Optional[int] = None
     answer_text: str
     answer_mode: Optional[str] = "typed"  # typed, voice_transcript, option_selected
     selected_option: Optional[str] = None

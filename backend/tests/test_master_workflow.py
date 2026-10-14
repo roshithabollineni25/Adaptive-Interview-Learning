@@ -44,11 +44,17 @@ def mock_invoke_structured(system_instruction: str, prompt: str):
             "_metadata": {"is_real_llm": True, "evaluator": "test_mock", "source": "mock"}
         }
     elif "question #" in lower or "generate question" in lower:
+        target_comp = "Distributed Storage"
+        if "target competency to assess:" in lower:
+            import re
+            m = re.search(r"target competency to assess:\s*['\"]([^'\"]+)['\"]", prompt, re.IGNORECASE)
+            if m:
+                target_comp = m.group(1)
         return {
-            "question": "How do you handle split-brain scenarios in a distributed cluster with PostgreSQL?",
-            "competency_tested": "Distributed Storage",
+            "question": f"How do you design and test resilient components for {target_comp}?",
+            "competency_tested": target_comp,
             "difficulty_level": "Medium",
-            "expected_criteria": "Understanding of consensus, fencing tokens, and automated failover.",
+            "expected_criteria": f"Understanding of consensus, trade-offs, and practical depth in {target_comp}.",
             "_metadata": {"is_real_llm": True, "evaluator": "test_mock", "source": "mock"}
         }
     return {
@@ -596,6 +602,168 @@ def test_integrity_strike_termination():
         assert r3.status_code == 200
         assert r3.json().get("terminated") is True, f"Got: {r3.json()}"
         assert "terminated" in r3.json()["termination_reason"].lower()
+
+def test_adaptive_intelligence_modules():
+    """
+    Focused test covering the 5 Core Intelligence Modules:
+    Module 1: Adaptive Question Generation & Competency Targeting (untested competencies selected, stopping policy)
+    Module 2: Real-Time Candidate Evaluation & Idempotent Answer Submission
+    Module 3: Integrity Intelligence (qualifying screenshot capture and telemetry risk assessment)
+    Module 4: 4-Tier Resume-to-Interview Skill Gap Intelligence (Demonstrated, Claimed, Not Demonstrated, Not Assessed)
+    Module 5: Candidate Decision Intelligence & Dossier Report Persistence
+    """
+    with patch.object(llm_service, "invoke_structured", side_effect=mock_invoke_structured):
+        # 1. Setup recruiter and job with 3 distinct competencies
+        rec_email = f"rec.modules.{datetime.datetime.utcnow().timestamp()}@adaptive.io"
+        rec_reg = client.post("/api/auth/register", json={
+            "email": rec_email,
+            "password": "Password123!",
+            "full_name": "Lead Evaluator",
+            "role": "recruiter"
+        }).json()
+        rec_headers = {"Authorization": f"Bearer {rec_reg['access_token']}"}
+
+        job_res = client.post("/api/recruitment/jobs", json={
+            "title": "Cloud Infrastructure Architect",
+            "department": "Platform Engineering",
+            "raw_text": "We require Kubernetes, Distributed Storage, and Python Systems architecture expertise.",
+            "experience_level": "Senior"
+        }, headers=rec_headers)
+        assert job_res.status_code == 200
+        job_id = job_res.json()["id"]
+
+        # 2. Setup candidate with enrolled face and ID card
+        cand_email = f"cand.modules.{datetime.datetime.utcnow().timestamp()}@gmail.com"
+        cand_reg = client.post("/api/auth/register", json={
+            "email": cand_email,
+            "password": "Password123!",
+            "full_name": "Dr. Jordan Hayes",
+            "role": "candidate"
+        }).json()
+        cand_headers = {"Authorization": f"Bearer {cand_reg['access_token']}"}
+
+        app_res = client.post(
+            "/api/candidate-portal/application",
+            data={"target_role": "Cloud Infrastructure Architect"},
+            files={"file": ("resume.txt", b"Expertise in Python, Docker, and Distributed Consensus.", "text/plain")},
+            headers=cand_headers
+        )
+        cand_id = app_res.json()["candidate"]["id"]
+
+        # Enroll face with exact facial feature parameters satisfying Haar cascade alt2
+        import numpy as np
+        import cv2
+        import base64
+        face_canvas = np.ones((400, 400, 3), dtype=np.uint8) * 220
+        cv2.ellipse(face_canvas, (200, 200), (90, 120), 0, 0, 360, (180, 160, 150), -1)
+        cv2.ellipse(face_canvas, (165, 170), (14, 8), 0, 0, 360, (60, 50, 40), -1)
+        cv2.ellipse(face_canvas, (235, 170), (14, 8), 0, 0, 360, (60, 50, 40), -1)
+        cv2.circle(face_canvas, (165, 170), 4, (10, 10, 10), -1)
+        cv2.circle(face_canvas, (235, 170), 4, (10, 10, 10), -1)
+        cv2.ellipse(face_canvas, (165, 150), (20, 4), -10, 0, 360, (50, 40, 30), -1)
+        cv2.ellipse(face_canvas, (235, 150), (20, 4), 10, 0, 360, (50, 40, 30), -1)
+        cv2.line(face_canvas, (200, 180), (200, 220), (120, 100, 90), 3)
+        cv2.line(face_canvas, (200, 220), (190, 228), (120, 100, 90), 2)
+        cv2.line(face_canvas, (190, 228), (210, 228), (120, 100, 90), 2)
+        cv2.ellipse(face_canvas, (200, 260), (30, 10), 0, 0, 360, (100, 60, 70), -1)
+        _, buf = cv2.imencode('.jpg', face_canvas)
+        face_b64 = "data:image/jpeg;base64," + base64.b64encode(buf).decode('utf-8')
+
+        enroll_res = client.post("/api/candidate-portal/enroll-face", json={"face_image_base64": face_b64}, headers=cand_headers)
+        assert enroll_res.status_code == 200
+
+        # Schedule interview
+        sched_res = client.post("/api/recruitment/sessions/schedule", json={
+            "candidate_id": cand_id,
+            "job_description_id": job_id,
+            "scheduled_start": datetime.datetime.utcnow().isoformat()
+        }, headers=rec_headers)
+        session_data = sched_res.json()
+        token = session_data["session_token"]
+        session_id = session_data["session_id"]
+
+        # Synthetic ID card
+        id_canvas = np.ones((300, 450, 3), dtype=np.uint8) * 240
+        cv2.rectangle(id_canvas, (20, 20), (430, 280), (70, 70, 70), 3)
+        cv2.putText(id_canvas, "DR. JORDAN HAYES", (40, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (50, 50, 50), 2)
+        _, id_buf = cv2.imencode('.jpg', id_canvas)
+        id_b64 = "data:image/jpeg;base64," + base64.b64encode(id_buf).decode('utf-8')
+
+        # Pass identity verification gate
+        gate_res = client.post(f"/api/interview/{token}/verify-identity", json={
+            "probe_frame_base64": face_b64,
+            "id_card_frame_base64": id_b64
+        })
+        assert gate_res.status_code == 200
+        assert gate_res.json()["verified"] is True
+        assert "first_question" in gate_res.json()
+
+        # Log an integrity screenshot event (Module 3)
+        snap_res = client.post(f"/api/interview/{token}/integrity-event", json={
+            "event_type": "face_missing",
+            "severity": "high",
+            "frame_base64": face_b64,
+            "metadata_info": {"reason": "Test camera movement"}
+        })
+        assert snap_res.status_code == 200
+
+        # Answer Question 1 (Module 2: Real-time evaluation)
+        ans1_res = client.post(f"/api/interview/{token}/submit-answer", json={
+            "answer_text": "We implement Raft consensus using etcd and state machine replication with automated leader election.",
+            "answer_mode": "typed"
+        })
+        assert ans1_res.status_code == 200
+        assert ans1_res.json()["evaluation"]["score"] >= 7.0
+
+        # Idempotency check: duplicate submission on Question 1 does not raise error or duplicate questions
+        ans1_dup = client.post(f"/api/interview/{token}/submit-answer", json={
+            "question_id": ans1_res.json()["question_id"],
+            "answer_text": "We implement Raft consensus using etcd and state machine replication with automated leader election.",
+            "answer_mode": "typed"
+        })
+        assert ans1_dup.status_code == 200
+        assert ans1_dup.json()["evaluation"]["idempotent"] is True
+
+        # Answer remaining adaptive questions until interview completes according to adaptive policy
+        for i in range(8):
+            curr = client.get(f"/api/interview/{token}").json()
+            if curr.get("status") == "completed" or not curr.get("active_question"):
+                break
+            ans_sub = client.post(f"/api/interview/{token}/submit-answer", json={
+                "answer_text": f"Response {i}: We leverage distributed partitioning, fencing tokens, and automated heartbeat recovery across regions.",
+                "answer_mode": "typed"
+            })
+            assert ans_sub.status_code == 200
+            if ans_sub.json().get("is_interview_complete"):
+                break
+
+        # Verify Completed Dossier Report (Modules 4 & 5)
+        dossier = client.get(f"/api/recruitment/sessions/{session_id}", headers=rec_headers).json()
+        assert dossier["status"] == "completed"
+        assert dossier["final_score"] is not None
+        assert dossier["final_recommendation"] in ["Strong Hire", "Hire", "Lean No", "No Hire"]
+
+        # Check 4-Tier Skill Gap Analysis (Module 4)
+        sg = dossier["skill_gap_analysis"]
+        assert "demonstrated" in sg
+        assert "claimed_unvalidated" in sg
+        assert "not_demonstrated" in sg
+        assert "not_assessed" in sg
+        assert "detailed_evidence" in sg
+        assert len(sg["detailed_evidence"]) > 0
+
+        # Check Evidence Report (Module 5)
+        ev_rep = dossier["evidence_report"]
+        assert ev_rep is not None
+        assert "integrity_summary" in ev_rep
+        assert "stopping_rationale" in ev_rep
+        assert "suggested_followups" in ev_rep
+
+        # Check integrity screenshot persistence (Module 3)
+        assert len(dossier["integrity_events"]) > 0
+        screenshot_events = [e for e in dossier["integrity_events"] if e.get("screenshot_base64")]
+        assert len(screenshot_events) >= 1
+
 
 
 

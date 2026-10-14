@@ -45,6 +45,11 @@ async def lifespan(app: FastAPI):
                     if col_name not in existing_q_cols:
                         conn.execute(text(f"ALTER TABLE interview_questions ADD COLUMN {col_name} {col_type};"))
                         conn.commit()
+            if "integrity_events" in inspector.get_table_names():
+                existing_ev_cols = {c["name"] for c in inspector.get_columns("integrity_events")}
+                if "screenshot_base64" not in existing_ev_cols:
+                    conn.execute(text("ALTER TABLE integrity_events ADD COLUMN screenshot_base64 TEXT;"))
+                    conn.commit()
     except Exception as mig_err:
         import logging
         logging.getLogger("uvicorn.error").warning(f"Database auto-migration warning: {mig_err}")
